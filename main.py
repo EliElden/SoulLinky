@@ -8,11 +8,28 @@ waiting_for_message = {}
 @bot.message_handler(commands=['start'])
 def start(message):
     bot.send_message(
-        message.chat.id, f"Привет, {message.from_user.first_name}! Я бот для пар")
+        message.chat.id, f"Привет, {message.from_user.first_name}! Я бот для парочек 💕")
     bot.send_message(
         message.chat.id, f"Напиши /connect, чтобы подключиться к партнеру")
     bot.send_message(
-        message.chat.id, f"Чтобы узнать свой ID для подключения, напиши /id")
+        message.chat.id, f"Чтобы узнать свой ID для подключения, напиши /id\n\n"
+        "Если забудешь команды, просто нажми /help")
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    help_text = (
+        "Доступные команды:\n\n"
+        "/start — Перезапустить бота\n"
+        "/help — Показать это меню\n"
+        "/id — Узнать свой числовой ID\n"
+        "/connect — Подключиться к партнеру по его ID\n"
+        "/love — Отправить любовное послание 💌"
+    )
+    bot.send_message(message.chat.id, help_text)
+
+@bot.message_handler(commands=['id'])
+def id(message):
+    bot.send_message(message.chat.id, f"Ваш ID: {message.from_user.id}")
 
 @bot.message_handler(commands=['connect'])
 def connect(message):
@@ -32,9 +49,6 @@ def set_partner(message):
     except:
         bot.send_message(message.chat.id, "Ошибка, попробуй ввести ID еще раз")
 
-@bot.message_handler(commands=['id'])
-def id(message):
-    bot.send_message(message.chat.id, f"Ваш ID: {message.from_user.id}")
 
 @bot.message_handler(commands=['love'])
 def love(message):
