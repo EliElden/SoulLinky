@@ -1,19 +1,44 @@
-import telebot
 from config import bot
+from telebot import types
 
 pairs = {}
 waiting_for_partner = {}
 waiting_for_message = {}
+user_genders = {}
 
 @bot.message_handler(commands=['start'])
 def start(message):
+    markup = types.InlineKeyboardMarkup()
+    btn_m = types.InlineKeyboardButton("Я кот 🐈‍⬛", callback_data="gender_m")
+    btn_f = types.InlineKeyboardButton("Я кошка 🐈", callback_data="gender_f")
+    markup.add(btn_m, btn_f)
+
     bot.send_message(
-        message.chat.id, f"Привет, {message.from_user.first_name}! Я бот для парочек 💕")
-    bot.send_message(
-        message.chat.id, f"Напиши /connect, чтобы подключиться к партнеру")
-    bot.send_message(
-        message.chat.id, f"Чтобы узнать свой ID для подключения, напиши /id\n\n"
-        "Если забудешь команды, просто нажми /help")
+        message.chat.id, 
+        f"Привет, {message.from_user.first_name}! Я бот для парочек 💕\n"
+        "Для начала, давай выберем твой пол:",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("gender_"))
+def save_gender(call):
+    if call.data == "gender_m":
+        user_genders[call.message.chat.id] = "male"
+    elif call.data == "gender_f":
+        user_genders[call.message.chat.id] = "female"
+
+    text = (
+        "Отлично! Теперь ты можешь подключиться к своей половинке.\n\n"
+        "Напиши /connect, чтобы подключиться к партнеру\n"
+        "Чтобы узнать свой ID для подключения, напиши /id\n\n"
+        "Если забудешь команды, просто нажми /help"
+    )
+
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=text
+    )
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
