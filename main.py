@@ -3,6 +3,7 @@ from config import bot
 
 pairs = {}
 waiting_for_partner = {}
+waiting_for_message = {}
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -34,6 +35,26 @@ def set_partner(message):
 @bot.message_handler(commands=['id'])
 def id(message):
     bot.send_message(message.chat.id, f"Ваш ID: {message.from_user.id}")
+
+@bot.message_handler(commands=['love'])
+def love(message):
+    
+    if message.chat.id in pairs:
+        waiting_for_message[message.chat.id] = True
+        bot.send_message(message.chat.id, "Напиши сообщение для партнера 💌")
+    else:
+        bot.send_message(message.chat.id, "Сначала нужно подключиться к партнеру через /connect")
+
+@bot.message_handler(func=lambda m: m.chat.id in waiting_for_message)
+def send_love(message):
+    partner_id = pairs.get(message.chat.id)
+
+    if partner_id:
+        bot.send_message(partner_id, f"💌 Сообщение от партнера:\n{message.text}")
+        bot.send_message(message.chat.id, "Отправлено 💕")
+
+    if message.chat.id in waiting_for_message:
+        waiting_for_message.pop(message.chat.id)
 
 if __name__ == "__main__":
     bot.polling(none_stop=True)
