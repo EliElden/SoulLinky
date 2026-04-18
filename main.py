@@ -8,6 +8,14 @@ user_genders = {}
 
 @bot.message_handler(commands=['start'])
 def start(message):
+    if message.chat.id in pairs:
+        bot.send_message(
+            message.chat.id, 
+            "С возвращением! Ты уже подключен к своей половинке 💕\n"
+            "Пиши /love, чтобы отправить послание, или /help для списка команд."
+        )
+        return
+
     markup = types.InlineKeyboardMarkup()
     btn_m = types.InlineKeyboardButton("Я кот 🐈‍⬛", callback_data="gender_m")
     btn_f = types.InlineKeyboardButton("Я кошка 🐈", callback_data="gender_f")
@@ -16,7 +24,7 @@ def start(message):
     bot.send_message(
         message.chat.id, 
         f"Привет, {message.from_user.first_name}! Я бот для парочек 💕\n"
-        "Для начала, давай выберем твой пол:",
+        "Для начала, скажи кто ты:",
         reply_markup=markup
     )
 
