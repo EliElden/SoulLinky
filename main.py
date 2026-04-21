@@ -78,39 +78,48 @@ def connect(message):
 # Обработка ввода ID партнера для подключения
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_partner)
 def set_partner(message):
+    if message.text.startswith('/'):
+        waiting_for_partner.pop(message.chat.id, None)
+        bot.send_message(message.chat.id, "Ввод ID отменен. Напиши команду еще раз:")
+        return
+
     try:
         partner_id = int(message.text)
         pairs[message.chat.id] = partner_id
         pairs[partner_id] = message.chat.id
 
-        waiting_for_partner.pop(message.chat.id)
+        waiting_for_partner.pop(message.chat.id, None)
 
-        bot.send_message(message.chat.id, "Партнер успешно подключен!")
-    except:
-        bot.send_message(message.chat.id, "Ошибка, попробуй ввести ID еще раз")
+        bot.send_message(message.chat.id, "Партнер успешно подключен! 💕")
+    except ValueError: 
+        bot.send_message(message.chat.id, "Ошибка, попробуй ввести ID еще раз (только цифры):")
 
 
 # /love - отправить любовное послание партнеру
 @bot.message_handler(commands=['love'])
 def love(message):
-    
     if message.chat.id in pairs:
         waiting_for_message[message.chat.id] = True
         bot.send_message(message.chat.id, "Напиши сообщение для партнера 💌")
     else:
         bot.send_message(message.chat.id, "Сначала нужно подключиться к партнеру через /connect")
 
+
 # Обработка ввода сообщения для партнера и отправка ему
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_message)
 def send_love(message):
+    if message.text.startswith('/'):
+        waiting_for_message.pop(message.chat.id, None)
+        bot.send_message(message.chat.id, "Отправка сообщения отменена.")
+        return
+
     partner_id = pairs.get(message.chat.id)
 
     if partner_id:
         bot.send_message(partner_id, f"💌 Сообщение от партнера:\n{message.text}")
         bot.send_message(message.chat.id, "Отправлено 💕")
 
-    if message.chat.id in waiting_for_message:
-        waiting_for_message.pop(message.chat.id)
+    waiting_for_message.pop(message.chat.id, None)
 
 if __name__ == "__main__":
     bot.polling(none_stop=True)
