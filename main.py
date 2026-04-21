@@ -6,6 +6,7 @@ waiting_for_partner = {}
 waiting_for_message = {}
 user_genders = {}
 
+# /start - начать диалог с ботом и выбрать пол пользователя
 @bot.message_handler(commands=['start'])
 def start(message):
     if message.chat.id in pairs:
@@ -28,6 +29,7 @@ def start(message):
         reply_markup=markup
     )
 
+# Обработка выбора пола пользователя
 @bot.callback_query_handler(func=lambda call: call.data.startswith("gender_"))
 def save_gender(call):
     if call.data == "gender_m":
@@ -48,6 +50,7 @@ def save_gender(call):
         text=text
     )
 
+# /help - показать список команд
 @bot.message_handler(commands=['help'])
 def help_command(message):
     help_text = (
@@ -60,15 +63,19 @@ def help_command(message):
     )
     bot.send_message(message.chat.id, help_text)
 
+
+# /id - показать числовой ID пользователя для подключения
 @bot.message_handler(commands=['id'])
 def id(message):
     bot.send_message(message.chat.id, f"Ваш ID: {message.from_user.id}")
 
+# /connect - начать процесс подключения к партнеру по его ID
 @bot.message_handler(commands=['connect'])
 def connect(message):
     waiting_for_partner[message.chat.id] = True
     bot.send_message(message.chat.id, "Введи числовой ID партнера:")
 
+# Обработка ввода ID партнера для подключения
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_partner)
 def set_partner(message):
     try:
@@ -83,6 +90,7 @@ def set_partner(message):
         bot.send_message(message.chat.id, "Ошибка, попробуй ввести ID еще раз")
 
 
+# /love - отправить любовное послание партнеру
 @bot.message_handler(commands=['love'])
 def love(message):
     
@@ -92,6 +100,7 @@ def love(message):
     else:
         bot.send_message(message.chat.id, "Сначала нужно подключиться к партнеру через /connect")
 
+# Обработка ввода сообщения для партнера и отправка ему
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_message)
 def send_love(message):
     partner_id = pairs.get(message.chat.id)
