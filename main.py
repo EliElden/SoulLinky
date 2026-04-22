@@ -108,15 +108,26 @@ def disconnect(message):
         bot.send_message(message.chat.id, "У тебя и так нет партнера. Для подключения нажми /connect")
         return
 
-    # Создаем кнопки подтверждения
+    changed_mind = get_text_by_gender(
+        message.chat.id,
+        male_text="передумал",
+        female_text="передумала"
+    )
+
     markup = types.InlineKeyboardMarkup()
     btn_yes = types.InlineKeyboardButton("Да, отключиться 💔", callback_data="disconnect_yes")
-    btn_no = types.InlineKeyboardButton("Нет, я передумал(а) ❤️", callback_data="disconnect_no")
+    btn_no = types.InlineKeyboardButton(f"Нет, я {changed_mind} ❤️", callback_data="disconnect_no")
     markup.add(btn_yes, btn_no)
+
+    sure_word = get_text_by_gender(
+        message.chat.id,
+        male_text="уверен",
+        female_text="уверена"
+    )
 
     bot.send_message(
         message.chat.id, 
-        "Ты точно уверен(а), что хочешь отключиться от своего текущего партнера?", 
+        f"Ты точно {sure_word}, что хочешь отключиться от своей половинки?", 
         reply_markup=markup
     )
 
