@@ -1,11 +1,10 @@
 from config import bot
 from telebot import types
 import time
+import db
 
-pairs = {}
 waiting_for_partner = {}
 waiting_for_message = {}
-user_genders = {}
 
 # /help - показать список команд
 @bot.message_handler(commands=['help'])
@@ -22,7 +21,7 @@ def help_command(message):
 
 # Функция для получения текста в зависимости от пола пользователя
 def get_text_by_gender(user_id, male_text, female_text):
-    gender = user_genders.get(user_id, "male")
+    gender = db.get_gender(user_id)
     if gender == "female":
         return female_text
     return male_text
@@ -30,7 +29,7 @@ def get_text_by_gender(user_id, male_text, female_text):
 # /start - начать диалог с ботом и выбрать пол пользователя
 @bot.message_handler(commands=['start'])
 def start(message):
-    if message.chat.id in pairs:
+    if db.get_partner(message.chat.id):
         # Используем нашу функцию
         status_text = get_text_by_gender(
             message.chat.id, 
@@ -60,10 +59,8 @@ def start(message):
 # Обработка выбора пола пользователя
 @bot.callback_query_handler(func=lambda call: call.data.startswith("gender_"))
 def save_gender(call):
-    if call.data == "gender_m":
-        user_genders[call.message.chat.id] = "male"
-    elif call.data == "gender_f":
-        user_genders[call.message.chat.id] = "female"
+    gender = "male" if call.data == "gender_m" else "female"
+    db.add_or_update_user(call.message.chat.id, gender)
 
     text = (
         "Отлично! Теперь ты можешь подключиться к своей половинке.\n\n"
@@ -100,7 +97,7 @@ def set_partner(message):
     try:
         partner_id = int(message.text)
 
-        if partner_id not in user_genders:
+        if db.get_gender(partner_id) is None:
             bot.send_message(
                 message.chat.id, 
                 "⚠️ Ошибка! Твой партнер еще не запустил бота или не выбрал пол.\n"
@@ -108,8 +105,7 @@ def set_partner(message):
             )
             return 
             
-        pairs[message.chat.id] = partner_id
-        pairs[partner_id] = message.chat.id
+        db.link_partners(message.chat.id, partner_id)
 
         waiting_for_partner.pop(message.chat.id, None)
 
@@ -139,7 +135,7 @@ def set_partner(message):
 # /love - отправить любовное послание партнеру
 @bot.message_handler(commands=['love'])
 def love(message):
-    if message.chat.id in pairs:
+    if db.get_partner(message.chat.id):
         waiting_for_message[message.chat.id] = True
         bot.send_message(message.chat.id, "Напиши сообщение для партнера 💌")
     else:
@@ -154,7 +150,7 @@ def send_love(message):
         bot.send_message(message.chat.id, "Отправка сообщения отменена.")
         return
 
-    partner_id = pairs.get(message.chat.id)
+    partner_id = db.get_partner(message.chat.id)
 
     if partner_id:
         bot.send_message(partner_id, f"💌 Сообщение от партнера:\n{message.text}")
