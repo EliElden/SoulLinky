@@ -16,6 +16,7 @@ def help_command(message):
         "/id — Узнать свой числовой ID\n"
         "/connect — Подключиться к партнеру\n"
         "/disconnect — Отключиться от партнера 💔\n"
+        "/gender — Изменить свой пол\n"
         "/love — Отправить любовное послание 💌"
     )
     bot.send_message(message.chat.id, help_text)
@@ -27,23 +28,30 @@ def get_text_by_gender(user_id, male_text, female_text):
         return female_text
     return male_text
 
-# /start - начать диалог с ботом и выбрать пол пользователя
+# /start - начать диалог с ботом
 @bot.message_handler(commands=['start'])
 def start(message):
-    if db.get_partner(message.chat.id):
-        status_text = get_text_by_gender(
-            message.chat.id, 
-            male_text="подключен", 
-            female_text="подключена"
-        )
-        
-        bot.send_message(
-            message.chat.id, 
-            f"С возвращением! Ты уже {status_text} к своей половинке 💕\n"
-            "Введи /love, чтобы отправить послание, или /help для списка команд."
-        )
+    gender = db.get_gender(message.chat.id)
+
+    # Если пол уже выбран, не показываем кнопки снова
+    if gender:
+        if db.get_partner(message.chat.id):
+            status_text = get_text_by_gender(message.chat.id, "подключен", "подключена")
+            bot.send_message(
+                message.chat.id, 
+                f"С возвращением! Ты уже {status_text} к своей половинке 💕\n"
+                "Введи /love, чтобы отправить послание, или /help для списка команд."
+            )
+        else:
+            animal = "котик 🐈‍⬛" if gender == "male" else "кошечка 🐈"
+            bot.send_message(
+                message.chat.id, 
+                f"С возвращением! В системе ты {animal}.\n"
+                "Тебе осталось только подключиться к партнеру через команду /connect!"
+            )
         return
 
+    # Если пола нет, показываем регистрацию
     markup = types.InlineKeyboardMarkup()
     btn_m = types.InlineKeyboardButton("Я кот 🐈‍⬛", callback_data="gender_m")
     btn_f = types.InlineKeyboardButton("Я кошка 🐈", callback_data="gender_f")
@@ -57,23 +65,42 @@ def start(message):
     )
 
 # Обработка выбора пола пользователя
+# Обработка выбора пола пользователя
 @bot.callback_query_handler(func=lambda call: call.data.startswith("gender_"))
 def save_gender(call):
     gender = "male" if call.data == "gender_m" else "female"
     
     db.add_or_update_user(call.message.chat.id, gender, call.from_user.username)
 
-    text = (
-        "Отлично! Теперь ты можешь подключиться к своей половинке.\n\n"
-        "Напиши /connect и введи ID партнера или его @username\n"
-        "Чтобы узнать свой ID, напиши /id\n"
-        "Если забудешь команды, просто нажми /help"
-    )
+    # Проверяем, есть ли уже партнер, чтобы выдать правильный текст
+    if db.get_partner(call.message.chat.id):
+        text = "Готово! Твой пол успешно изменен ✨"
+    else:
+        text = (
+            "Отлично! Теперь ты можешь подключиться к своей половинке.\n\n"
+            "Напиши /connect и введи ID половинки или @username\n"
+            "Чтобы узнать свой ID, напиши /id\n"
+            "Если забудешь команды, просто нажми /help"
+        )
 
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=text
+    )
+
+# /gender - изменить свой пол
+@bot.message_handler(commands=['gender'])
+def change_gender(message):
+    markup = types.InlineKeyboardMarkup()
+    btn_m = types.InlineKeyboardButton("Я кот 🐈‍⬛", callback_data="gender_m")
+    btn_f = types.InlineKeyboardButton("Я кошка 🐈", callback_data="gender_f")
+    markup.add(btn_m, btn_f)
+
+    bot.send_message(
+        message.chat.id, 
+        "Выбери, кем ты хочешь быть в системе:",
+        reply_markup=markup
     )
 
 # /id - показать числовой ID пользователя для подключения
