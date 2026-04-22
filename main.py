@@ -9,10 +9,25 @@ waiting_for_message = {}
 # --- ФУНКЦИИ-ПОМОЩНИКИ ---
 
 def get_main_keyboard():
-    """Создает главную клавиатуру с кнопкой отправки послания"""
+    """Создает главную клавиатуру с кнопками в два ряда"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    
     btn_love = types.KeyboardButton("💌 Отправить послание")
-    markup.add(btn_love)
+    btn_help = types.KeyboardButton("❓ Помощь")
+    btn_start = types.KeyboardButton("🔄 Перезапуск")
+
+    # .row() располагает кнопки в один ряд.
+    markup.row(btn_love)
+    markup.row(btn_help, btn_start)
+    
+    return markup
+
+def get_gender_keyboard():
+    """Создает инлайн-кнопки для выбора пола"""
+    markup = types.InlineKeyboardMarkup()
+    btn_m = types.InlineKeyboardButton("Я кот 🐈‍⬛", callback_data="gender_m")
+    btn_f = types.InlineKeyboardButton("Я кошка 🐈", callback_data="gender_f")
+    markup.add(btn_m, btn_f)
     return markup
 
 def get_text_by_gender(user_id, male_text, female_text):
@@ -26,6 +41,7 @@ def get_text_by_gender(user_id, male_text, female_text):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
+    markup = get_main_keyboard() if db.get_partner(message.chat.id) else None
     help_text = (
         "Доступные команды:\n\n"
         "/start — Перезапустить бота\n"
@@ -36,7 +52,11 @@ def help_command(message):
         "/disconnect — Отключиться от партнера 💔\n"
         "/love — Отправить любовное послание 💌"
     )
-    bot.send_message(message.chat.id, help_text)
+    bot.send_message(message.chat.id, help_text, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.text == "❓ Помощь")
+def help_button_handler(message):
+    help_command(message)
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -49,42 +69,43 @@ def start(message):
             bot.send_message(
                 message.chat.id, 
                 f"С возвращением! Ты уже {status_text} к своей половинке 💕\n"
-                "Используй кнопку внизу, чтобы отправить послание, или /help для списка команд.",
-                reply_markup=get_main_keyboard()  # Выводим главную кнопку
+                "Используй меню внизу, чтобы отправить послание, или /help для списка команд.",
+                reply_markup=get_main_keyboard()
             )
         else:
             animal = "котик 🐈‍⬛" if gender == "male" else "кошечка 🐈"
             bot.send_message(
                 message.chat.id, 
                 f"С возвращением! В системе ты {animal}.\n"
-                "Тебе осталось только подключиться к своей половинке через команду /connect!"
+                "Тебе осталось только подключиться к партнеру через команду /connect!"
             )
         return
 
     # Если пола нет, показываем регистрацию
-    markup = types.InlineKeyboardMarkup()
-    btn_m = types.InlineKeyboardButton("Я кот 🐈‍⬛", callback_data="gender_m")
-    btn_f = types.InlineKeyboardButton("Я кошка 🐈", callback_data="gender_f")
-    markup.add(btn_m, btn_f)
-
     bot.send_message(
         message.chat.id, 
         f"Привет, {message.from_user.first_name}! Я бот для парочек 💕\n"
         "Для начала, скажи кто ты:",
-        reply_markup=markup
+        reply_markup=get_gender_keyboard()
     )
+
+@bot.message_handler(func=lambda message: message.text == "🔄 Перезапуск")
+def start_button_handler(message):
+    start(message)
 
 @bot.message_handler(commands=['gender'])
 def change_gender(message):
-    markup = types.InlineKeyboardMarkup()
-    btn_m = types.InlineKeyboardButton("Я кот 🐈‍⬛", callback_data="gender_m")
-    btn_f = types.InlineKeyboardButton("Я кошка 🐈", callback_data="gender_f")
-    markup.add(btn_m, btn_f)
-
+    # Прячем нижнюю клавиатуру коротким сообщением
+    bot.send_message(
+        message.chat.id, 
+        "⚙️ Открываю настройки...", 
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+    # Выдаем сообщение с инлайн-кнопками
     bot.send_message(
         message.chat.id, 
         "Выбери, кем ты хочешь быть в системе:",
-        reply_markup=markup
+        reply_markup=get_gender_keyboard() 
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("gender_"))
@@ -93,25 +114,35 @@ def save_gender(call):
     db.add_or_update_user(call.message.chat.id, gender, call.from_user.username)
 
     if db.get_partner(call.message.chat.id):
-        text = "Готово! Твой пол успешно изменен ✨"
+        bot.edit_message_text(
+            "Готово! Твой пол успешно изменен ✨",
+            call.message.chat.id, 
+            call.message.message_id
+        )
+        bot.send_message(
+            call.message.chat.id, 
+            "Меню посланий активно 👇", 
+            reply_markup=get_main_keyboard()
+        )
     else:
         text = (
             "Отлично! Теперь ты можешь подключиться к своей половинке.\n\n"
-            "Напиши /connect и введи ID своей половинки или @username\n"
+            "Напиши /connect и введи ID партнера или его @username\n"
             "Чтобы узнать свой ID, напиши /id\n"
             "Если забудешь команды, просто нажми /help"
         )
-
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text=text
-    )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
 
 @bot.message_handler(commands=['id'])
 def id(message):
+    markup = get_main_keyboard() if db.get_partner(message.chat.id) else None
     bot.send_message(message.chat.id, "Твой числовой ID (нажми на цифры ниже, чтобы скопировать):")
-    bot.send_message(message.chat.id, f"`{message.from_user.id}`", parse_mode="Markdown")
+    bot.send_message(
+        message.chat.id, 
+        f"`{message.from_user.id}`", 
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
 
 # --- ПОДКЛЮЧЕНИЕ И ОТКЛЮЧЕНИЕ ---
 
@@ -150,7 +181,7 @@ def set_partner(message):
             bot.send_message(
                 message.chat.id, 
                 "❌ Формат не распознан.\n"
-                "Введи либо числовой ID (только цифры), либо никнейм (с @ в начале):"
+                "Введи либо числовой ID (только цифры), либо никнейм (обязательно с символом @ в начале):"
             )
             return
 
@@ -161,24 +192,24 @@ def set_partner(message):
     if db.get_gender(partner_id) is None:
         bot.send_message(
             message.chat.id, 
-            "⚠️ Ошибка! Твоя половинка еще не запустил(а) бота или не выбрал(а) пол.\n"
-            "Попроси зайти в бота, нажать /start, выбрать пол и прислать тебе свой ID или ник!"
+            "⚠️ Ошибка! Твой партнер еще не запустил бота или не выбрал пол.\n"
+            "Попроси его зайти в бота, нажать /start, выбрать пол и прислать тебе свой ID или ник!"
         )
         return 
             
     db.link_partners(message.chat.id, partner_id)
     waiting_for_partner.pop(message.chat.id, None)
 
-    # Уведомления об успехе (с выдачей главной клавиатуры)
-    action_text = get_text_by_gender(message.chat.id, male_text="подключен", female_text="подключена")
-    target_text = get_text_by_gender(partner_id, male_text="к своему котику! 🐈‍⬛", female_text="к своей кошечке! 🐈")
+    # Уведомления об успехе с выдачей главной клавиатуры
+    action_text = get_text_by_gender(message.chat.id, "подключен", "подключена")
+    target_text = get_text_by_gender(partner_id, "к своему котику! 🐈‍⬛", "к своей кошечке! 🐈")
     bot.send_message(
         message.chat.id, 
         f"Ура! Ты успешно {action_text} {target_text} 💕",
         reply_markup=get_main_keyboard()
     )
 
-    notification_text = get_text_by_gender(message.chat.id, male_text="К тебе подключился твой котик! 🐈‍⬛", female_text="К тебе подключилась твоя кошечка! 🐈")
+    notification_text = get_text_by_gender(message.chat.id, "К тебе подключился твой котик! 🐈‍⬛", "К тебе подключилась твоя кошечка! 🐈")
     bot.send_message(
         partner_id, 
         notification_text,
@@ -188,25 +219,24 @@ def set_partner(message):
 @bot.message_handler(commands=['disconnect'])
 def disconnect(message):
     if not db.get_partner(message.chat.id):
-        status_text = get_text_by_gender(
-            message.chat.id,
-            male_text="подключен",
-            female_text="подключена"
-        )
-        
-        bot.send_message(
-            message.chat.id, 
-            f"Ты ни к кому не {status_text}. Для подключения нажми /connect"
-        )
+        status_text = get_text_by_gender(message.chat.id, "подключен", "подключена")
+        bot.send_message(message.chat.id, f"Ты ни с кем не {status_text}. Для подключения нажми /connect")
         return
 
-    changed_mind = get_text_by_gender(message.chat.id, male_text="передумал", female_text="передумала")
+    # Прячем нижнюю клавиатуру коротким сообщением
+    bot.send_message(
+        message.chat.id, 
+        "💔 Управление связью...", 
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+
+    changed_mind = get_text_by_gender(message.chat.id, "передумал", "передумала")
     markup = types.InlineKeyboardMarkup()
     btn_yes = types.InlineKeyboardButton("Да, отключиться 💔", callback_data="disconnect_yes")
     btn_no = types.InlineKeyboardButton(f"Нет, я {changed_mind} ❤️", callback_data="disconnect_no")
     markup.add(btn_yes, btn_no)
 
-    sure_word = get_text_by_gender(message.chat.id, male_text="уверен", female_text="уверена")
+    sure_word = get_text_by_gender(message.chat.id, "уверен", "уверена")
     bot.send_message(
         message.chat.id, 
         f"Ты точно {sure_word}, что хочешь отключиться от своей половинки?", 
@@ -221,6 +251,11 @@ def process_disconnect(call):
             message_id=call.message.message_id,
             text="Отключение отменено. Вы всё еще вместе! 💕"
         )
+        bot.send_message(
+            call.message.chat.id, 
+            "Главное меню активно 👇", 
+            reply_markup=get_main_keyboard()
+        )
         return
     
     if call.data == "disconnect_yes":
@@ -228,17 +263,15 @@ def process_disconnect(call):
         if partner_id:
             db.unlink_partners(call.message.chat.id)
             
-            # Удаляем сообщение с кнопками "Да/Нет"
             bot.delete_message(call.message.chat.id, call.message.message_id)
             
-            # Отправляем сообщение и ПРЯЧЕМ клавиатуру
             bot.send_message(
                 call.message.chat.id,
                 "Связь разорвана. Вы больше не подключены друг к другу. 💔",
                 reply_markup=types.ReplyKeyboardRemove()
             )
             
-            initiator_text = get_text_by_gender(call.message.chat.id, male_text="Твой котик разорвал", female_text="Твоя кошечка разорвала")
+            initiator_text = get_text_by_gender(call.message.chat.id, "Твой котик разорвал", "Твоя кошечка разорвала")
             bot.send_message(
                 partner_id, 
                 f"💔 {initiator_text} связь. Вы больше не подключены друг к другу.",
@@ -257,11 +290,15 @@ def process_disconnect(call):
 def love(message):
     if db.get_partner(message.chat.id):
         waiting_for_message[message.chat.id] = True
-        bot.send_message(message.chat.id, "Напиши сообщение для половинки 💌")
+        # Прячем кнопки, пока человек пишет сообщение
+        bot.send_message(
+            message.chat.id, 
+            "Напиши сообщение для партнера 💌", 
+            reply_markup=types.ReplyKeyboardRemove()
+        )
     else:
         bot.send_message(message.chat.id, "Сначала нужно подключиться к половинке через /connect")
 
-# Перехватываем текст с главной кнопки и запускаем функцию love
 @bot.message_handler(func=lambda message: message.text == "💌 Отправить послание")
 def love_button_handler(message):
     love(message)
@@ -270,7 +307,7 @@ def love_button_handler(message):
 def send_love(message):
     if message.text.startswith('/'):
         waiting_for_message.pop(message.chat.id, None)
-        bot.send_message(message.chat.id, "Отправка сообщения отменена.")
+        bot.send_message(message.chat.id, "Отправка сообщения отменена.", reply_markup=get_main_keyboard())
         return
 
     partner_id = db.get_partner(message.chat.id)
@@ -278,11 +315,11 @@ def send_love(message):
     if partner_id:
         sender_text = get_text_by_gender(
             message.chat.id,
-            male_text="твоего котика",
-            female_text="твоей кошечки"
+            "твоего котика",
+            "твоей кошечки"
         )
         bot.send_message(partner_id, f"💌 Сообщение от {sender_text}:\n\n{message.text}")
-        bot.send_message(message.chat.id, "Отправлено 💕")
+        bot.send_message(message.chat.id, "Отправлено 💕", reply_markup=get_main_keyboard())
 
     waiting_for_message.pop(message.chat.id, None)
 
