@@ -126,7 +126,7 @@ if __name__ == "__main__":
     print("Бот запущен...")
     while True:
         try:
-            bot.polling(none_stop=True, timeout=90, request_timeout=90) 
+            bot.polling(none_stop=True, timeout=90) 
         except Exception as e:
             print(f"⚠️ Ошибка связи с Telegram. Жду 5 секунд... Ошибка: {e}")
             time.sleep(5)
