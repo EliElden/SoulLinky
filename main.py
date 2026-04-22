@@ -1,5 +1,6 @@
 from config import bot
 from telebot import types
+import time
 
 pairs = {}
 waiting_for_partner = {}
@@ -122,4 +123,10 @@ def send_love(message):
     waiting_for_message.pop(message.chat.id, None)
 
 if __name__ == "__main__":
-    bot.polling(none_stop=True)
+    print("Бот запущен...")
+    while True:
+        try:
+            bot.polling(none_stop=True, timeout=90) 
+        except Exception as e:
+            print(f"⚠️ Ошибка связи с Telegram. Жду 5 секунд... Ошибка: {e}")
+            time.sleep(5)
