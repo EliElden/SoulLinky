@@ -14,7 +14,7 @@ def help_command(message):
         "/start — Перезапустить бота\n"
         "/help — Показать это меню\n"
         "/id — Узнать свой числовой ID\n"
-        "/connect — Подключиться к партнеру по его ID\n"
+        "/connect — Подключиться к партнеру\n"
         "/love — Отправить любовное послание 💌"
     )
     bot.send_message(message.chat.id, help_text)
@@ -30,7 +30,6 @@ def get_text_by_gender(user_id, male_text, female_text):
 @bot.message_handler(commands=['start'])
 def start(message):
     if db.get_partner(message.chat.id):
-        # Используем нашу функцию
         status_text = get_text_by_gender(
             message.chat.id, 
             male_text="подключен", 
@@ -60,12 +59,13 @@ def start(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("gender_"))
 def save_gender(call):
     gender = "male" if call.data == "gender_m" else "female"
-    db.add_or_update_user(call.message.chat.id, gender)
+    
+    db.add_or_update_user(call.message.chat.id, gender, call.from_user.username)
 
     text = (
         "Отлично! Теперь ты можешь подключиться к своей половинке.\n\n"
-        "Напиши /connect, чтобы подключиться к партнеру\n"
-        "Чтобы узнать свой ID для подключения, напиши /id\n\n"
+        "Напиши /connect и введи ID партнера или его @username\n"
+        "Чтобы узнать свой ID, напиши /id\n"
         "Если забудешь команды, просто нажми /help"
     )
 
@@ -78,58 +78,75 @@ def save_gender(call):
 # /id - показать числовой ID пользователя для подключения
 @bot.message_handler(commands=['id'])
 def id(message):
-    bot.send_message(message.chat.id, f"Ваш ID: {message.from_user.id}")
+    bot.send_message(message.chat.id, "Твой числовой ID (нажми на цифры ниже, чтобы скопировать):")
+    bot.send_message(message.chat.id, f"`{message.from_user.id}`", parse_mode="Markdown")
 
-# /connect - начать процесс подключения к партнеру по его ID
+# /connect - начать процесс подключения к партнеру
 @bot.message_handler(commands=['connect'])
 def connect(message):
     waiting_for_partner[message.chat.id] = True
-    bot.send_message(message.chat.id, "Введи числовой ID своей половинки:")
+    bot.send_message(message.chat.id, "Введи числовой ID своей половинки или никнейм (например, @nickname):")
 
-# Обработка ввода ID партнера для подключения
+# Обработка ввода ID/ника партнера для подключения
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_partner)
 def set_partner(message):
     if message.text.startswith('/'):
         waiting_for_partner.pop(message.chat.id, None)
-        bot.send_message(message.chat.id, "Ввод ID отменен. Напиши команду еще раз:")
+        bot.send_message(message.chat.id, "Ввод отменен. Напиши команду еще раз:")
         return
 
-    try:
-        partner_id = int(message.text)
+    raw_input = message.text.strip()
+    partner_id = None
 
-        if db.get_gender(partner_id) is None:
-            bot.send_message(
-                message.chat.id, 
-                "⚠️ Ошибка! Твой партнер еще не запустил бота или не выбрал пол.\n"
-                "Попроси его зайти в бота, нажать /start, выбрать пол и прислать тебе свой ID!"
-            )
-            return 
-            
-        db.link_partners(message.chat.id, partner_id)
+    # Гибридная проверка: никнейм или ID
+    if raw_input.startswith('@'):
+        partner_id = db.get_id_by_username(raw_input)
+        if not partner_id:
+            bot.send_message(message.chat.id, "⚠️ Пользователь с таким ником не найден. Он должен сначала зайти в бота!")
+            return
+    else:
+        try:
+            partner_id = int(raw_input)
+        except ValueError:
+            bot.send_message(message.chat.id, "Введи либо ID (цифры), либо никнейм (начиная с @)")
+            return
 
-        waiting_for_partner.pop(message.chat.id, None)
+    # Защита от случайного подключения к самому себе
+    if partner_id == message.chat.id:
+        bot.send_message(message.chat.id, "Нельзя подключиться к самому себе! Введи ID или ник партнера:")
+        return
 
-        action_text = get_text_by_gender(
-            message.chat.id,
-            male_text="подключен",
-            female_text="подключена"
-        )
-        target_text = get_text_by_gender(
-            partner_id,
-            male_text="к своему котику! 🐈‍⬛",
-            female_text="к своей кошечке! 🐈"
-        )
-        bot.send_message(message.chat.id, f"Ура! Ты успешно {action_text} {target_text} 💕")
-
-        notification_text = get_text_by_gender(
+    # Проверка регистрации партнера
+    if db.get_gender(partner_id) is None:
+        bot.send_message(
             message.chat.id, 
-            male_text="К тебе подключился твой котик! 🐈‍⬛",
-            female_text="К тебе подключилась твоя кошечка! 🐈"
+            "⚠️ Ошибка! Твой партнер еще не запустил бота или не выбрал пол.\n"
+            "Попроси его зайти в бота, нажать /start, выбрать пол и прислать тебе свой ID или ник!"
         )
-        bot.send_message(partner_id, notification_text)
+        return 
+            
+    db.link_partners(message.chat.id, partner_id)
+    waiting_for_partner.pop(message.chat.id, None)
 
-    except ValueError: 
-        bot.send_message(message.chat.id, "Ошибка, попробуй ввести ID еще раз (только цифры):")
+    # Уведомления об успехе
+    action_text = get_text_by_gender(
+        message.chat.id,
+        male_text="подключен",
+        female_text="подключена"
+    )
+    target_text = get_text_by_gender(
+        partner_id,
+        male_text="к своему котику! 🐈‍⬛",
+        female_text="к своей кошечке! 🐈"
+    )
+    bot.send_message(message.chat.id, f"Ура! Ты успешно {action_text} {target_text} 💕")
+
+    notification_text = get_text_by_gender(
+        message.chat.id, 
+        male_text="К тебе подключился твой котик! 🐈‍⬛",
+        female_text="К тебе подключилась твоя кошечка! 🐈"
+    )
+    bot.send_message(partner_id, notification_text)
 
 
 # /love - отправить любовное послание партнеру
@@ -153,12 +170,19 @@ def send_love(message):
     partner_id = db.get_partner(message.chat.id)
 
     if partner_id:
-        bot.send_message(partner_id, f"💌 Сообщение от партнера:\n{message.text}")
+        # Сделали сообщения тоже персонализированными в зависимости от пола отправителя
+        sender_text = get_text_by_gender(
+            message.chat.id,
+            male_text="твоего котика",
+            female_text="твоей кошечки"
+        )
+        bot.send_message(partner_id, f"💌 Сообщение от {sender_text}:\n\n{message.text}")
         bot.send_message(message.chat.id, "Отправлено 💕")
 
     waiting_for_message.pop(message.chat.id, None)
 
 if __name__ == "__main__":
+    db.init_db() # Обязательная инициализация базы данных
     print("Бот запущен...")
     while True:
         try:
