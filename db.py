@@ -57,3 +57,13 @@ def get_partner(user_id):
     cursor.execute('SELECT partner_id FROM users WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     return result[0] if result else None
+
+def unlink_partners(user_id):
+    """Разрывает связь между партнерами (у обоих сразу)"""
+    partner_id = get_partner(user_id)
+    if partner_id:
+        cursor.execute('UPDATE users SET partner_id = NULL WHERE user_id = ?', (user_id,))
+        cursor.execute('UPDATE users SET partner_id = NULL WHERE user_id = ?', (partner_id,))
+        conn.commit()
+        return partner_id
+    return None

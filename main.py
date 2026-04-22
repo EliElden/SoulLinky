@@ -15,6 +15,7 @@ def help_command(message):
         "/help — Показать это меню\n"
         "/id — Узнать свой числовой ID\n"
         "/connect — Подключиться к партнеру\n"
+        "/disconnect — Отключиться от партнера 💔\n"
         "/love — Отправить любовное послание 💌"
     )
     bot.send_message(message.chat.id, help_text)
@@ -84,8 +85,78 @@ def id(message):
 # /connect - начать процесс подключения к партнеру
 @bot.message_handler(commands=['connect'])
 def connect(message):
+    if db.get_partner(message.chat.id):
+        status_text = get_text_by_gender(
+            message.chat.id,
+            male_text="подключен",
+            female_text="подключена"
+        )
+        
+        bot.send_message(
+            message.chat.id, 
+            f"⚠️ Ты уже {status_text} к партнеру! Сначала нужно разорвать текущую связь через команду /disconnect"
+        )
+        return
+
     waiting_for_partner[message.chat.id] = True
     bot.send_message(message.chat.id, "Введи числовой ID своей половинки или никнейм (например, @nickname):")
+
+# /disconnect - разорвать связь с партнером
+@bot.message_handler(commands=['disconnect'])
+def disconnect(message):
+    if not db.get_partner(message.chat.id):
+        bot.send_message(message.chat.id, "У тебя и так нет партнера. Для подключения нажми /connect")
+        return
+
+    # Создаем кнопки подтверждения
+    markup = types.InlineKeyboardMarkup()
+    btn_yes = types.InlineKeyboardButton("Да, отключиться 💔", callback_data="disconnect_yes")
+    btn_no = types.InlineKeyboardButton("Нет, я передумал(а) ❤️", callback_data="disconnect_no")
+    markup.add(btn_yes, btn_no)
+
+    bot.send_message(
+        message.chat.id, 
+        "Ты точно уверен(а), что хочешь отключиться от своего текущего партнера?", 
+        reply_markup=markup
+    )
+
+# Обработка кнопок подтверждения отключения
+@bot.callback_query_handler(func=lambda call: call.data.startswith("disconnect_"))
+def process_disconnect(call):
+    # Если человек передумал
+    if call.data == "disconnect_no":
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Отключение отменено. Вы всё еще вместе! 💕"
+        )
+        return
+    
+    # Если нажал "Да"
+    if call.data == "disconnect_yes":
+        partner_id = db.get_partner(call.message.chat.id)
+        if partner_id:
+            db.unlink_partners(call.message.chat.id)
+            
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Связь разорвана. Вы больше не подключены друг к другу. 💔"
+            )
+            
+            # Уведомляем второго человека
+            initiator_text = get_text_by_gender(
+                call.message.chat.id,
+                male_text="Твой котик разорвал",
+                female_text="Твоя кошечка разорвала"
+            )
+            bot.send_message(partner_id, f"💔 {initiator_text} связь. Вы больше не подключены друг к другу.")
+        else:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Связь уже была разорвана."
+            )
 
 # Обработка ввода ID/ника партнера для подключения
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_partner)
