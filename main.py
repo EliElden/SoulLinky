@@ -32,12 +32,14 @@ def get_gender_keyboard():
     return markup
 
 def get_target_partner_text(user_id):
-    """Возвращает ласковое обращение к котейке (для подстановки после предлога 'к')"""
-    return get_text_by_gender(
-        user_id, 
-        male_text="своей кошечке 🐈", 
-        female_text="своему котику 🐈‍⬛"
-    )
+    """Возвращает ласковое обращение к котейке, основываясь на РЕАЛЬНОМ поле партнера"""
+    partner_id = db.get_partner(user_id)
+    
+    partner_gender = db.get_gender(partner_id)
+    
+    if partner_gender == "female":
+        return "своей кошечке 🐈"
+    return "своему котику 🐈‍⬛"
 
 def get_text_by_gender(user_id, male_text, female_text):
     """Возвращает нужный текст в зависимости от пола пользователя"""
