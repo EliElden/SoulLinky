@@ -7,10 +7,22 @@ waiting_for_partner = {}
 waiting_for_message = {}
 user_genders = {}
 
+# /help - показать список команд
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    help_text = (
+        "Доступные команды:\n\n"
+        "/start — Перезапустить бота\n"
+        "/help — Показать это меню\n"
+        "/id — Узнать свой числовой ID\n"
+        "/connect — Подключиться к партнеру по его ID\n"
+        "/love — Отправить любовное послание 💌"
+    )
+    bot.send_message(message.chat.id, help_text)
+
 # Функция для получения текста в зависимости от пола пользователя
 def get_text_by_gender(user_id, male_text, female_text):
     gender = user_genders.get(user_id, "male")
-    
     if gender == "female":
         return female_text
     return male_text
@@ -19,10 +31,17 @@ def get_text_by_gender(user_id, male_text, female_text):
 @bot.message_handler(commands=['start'])
 def start(message):
     if message.chat.id in pairs:
+        # Используем нашу функцию
+        status_text = get_text_by_gender(
+            message.chat.id, 
+            male_text="подключен", 
+            female_text="подключена"
+        )
+        
         bot.send_message(
             message.chat.id, 
-            "С возвращением! Ты уже подключен к своей половинке 💕\n"
-            "Пиши /love, чтобы отправить послание, или /help для списка команд."
+            f"С возвращением! Ты уже {status_text} к своей половинке 💕\n"
+            "Введи /love, чтобы отправить послание, или /help для списка команд."
         )
         return
 
@@ -59,20 +78,6 @@ def save_gender(call):
         text=text
     )
 
-# /help - показать список команд
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    help_text = (
-        "Доступные команды:\n\n"
-        "/start — Перезапустить бота\n"
-        "/help — Показать это меню\n"
-        "/id — Узнать свой числовой ID\n"
-        "/connect — Подключиться к партнеру по его ID\n"
-        "/love — Отправить любовное послание 💌"
-    )
-    bot.send_message(message.chat.id, help_text)
-
-
 # /id - показать числовой ID пользователя для подключения
 @bot.message_handler(commands=['id'])
 def id(message):
@@ -82,7 +87,7 @@ def id(message):
 @bot.message_handler(commands=['connect'])
 def connect(message):
     waiting_for_partner[message.chat.id] = True
-    bot.send_message(message.chat.id, "Введи числовой ID партнера:")
+    bot.send_message(message.chat.id, "Введи числовой ID своей половинки:")
 
 # Обработка ввода ID партнера для подключения
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_partner)
@@ -94,12 +99,39 @@ def set_partner(message):
 
     try:
         partner_id = int(message.text)
+
+        if partner_id not in user_genders:
+            bot.send_message(
+                message.chat.id, 
+                "⚠️ Ошибка! Твой партнер еще не запустил бота или не выбрал пол.\n"
+                "Попроси его зайти в бота, нажать /start, выбрать пол и прислать тебе свой ID!"
+            )
+            return 
+            
         pairs[message.chat.id] = partner_id
         pairs[partner_id] = message.chat.id
 
         waiting_for_partner.pop(message.chat.id, None)
 
-        bot.send_message(message.chat.id, "Партнер успешно подключен! 💕")
+        action_text = get_text_by_gender(
+            message.chat.id,
+            male_text="подключен",
+            female_text="подключена"
+        )
+        target_text = get_text_by_gender(
+            partner_id,
+            male_text="к своему котику! 🐈‍⬛",
+            female_text="к своей кошечке! 🐈"
+        )
+        bot.send_message(message.chat.id, f"Ура! Ты успешно {action_text} {target_text} 💕")
+
+        notification_text = get_text_by_gender(
+            message.chat.id, 
+            male_text="К тебе подключился твой котик! 🐈‍⬛",
+            female_text="К тебе подключилась твоя кошечка! 🐈"
+        )
+        bot.send_message(partner_id, notification_text)
+
     except ValueError: 
         bot.send_message(message.chat.id, "Ошибка, попробуй ввести ID еще раз (только цифры):")
 
@@ -111,7 +143,7 @@ def love(message):
         waiting_for_message[message.chat.id] = True
         bot.send_message(message.chat.id, "Напиши сообщение для партнера 💌")
     else:
-        bot.send_message(message.chat.id, "Сначала нужно подключиться к партнеру через /connect")
+        bot.send_message(message.chat.id, "Сначала нужно подключиться к половинке через /connect")
 
 
 # Обработка ввода сообщения для партнера и отправка ему
