@@ -7,6 +7,14 @@ waiting_for_partner = {}
 waiting_for_message = {}
 user_genders = {}
 
+# Функция для получения текста в зависимости от пола пользователя
+def get_text_by_gender(user_id, male_text, female_text):
+    gender = user_genders.get(user_id, "male")
+    
+    if gender == "female":
+        return female_text
+    return male_text
+
 # /start - начать диалог с ботом и выбрать пол пользователя
 @bot.message_handler(commands=['start'])
 def start(message):
