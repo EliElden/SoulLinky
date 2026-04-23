@@ -2,6 +2,7 @@ from config import bot
 from telebot import types
 import time
 import db 
+from config import bot, ADMIN_IDS
 
 # --- ГЛОБАЛЬНЫЕ СОСТОЯНИЯ ---
 # Словари для временного хранения данных в оперативной памяти бота.
@@ -9,6 +10,8 @@ import db
 waiting_for_partner = {} # Флаг: пользователь находится в процессе ввода ID/ника партнера
 waiting_for_message = {} # Флаг: пользователь пишет любовное послание
 draft_messages = {}      # Хранилище ID сообщений (черновиков) до их подтверждения отправки
+waiting_for_broadcast = {} # Флаг: админ находится в режиме рассылки
+broadcast_drafts = {}    # Хранилище ID сообщений для рассылки
 
 # ==========================================
 # ФУНКЦИИ-ПОМОЩНИКИ (ИНТЕРФЕЙС И ТЕКСТЫ)
@@ -74,8 +77,8 @@ def send_menu(chat_id, text="Главное меню 👇"):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
-    # Показываем клавиатуру только если у пользователя уже есть партнер
     markup = get_main_keyboard() if db.get_partner(message.chat.id) else None
+    
     help_text = (
         "Доступные команды:\n\n"
         "/start — Перезапустить бота\n"
@@ -86,7 +89,12 @@ def help_command(message):
         "/disconnect — Отключиться от котейки 💔\n"
         "/love — Отправить послание котейке 💌"
     )
-    bot.send_message(message.chat.id, help_text, reply_markup=markup)
+    
+    # Проверка прав: если пишет админ, добавляем скрытую команду
+    if message.chat.id in ADMIN_IDS:
+        help_text += "\n\n🛠 *Команды разработчика:*\n/broadcast — Массовая рассылка"
+
+    bot.send_message(message.chat.id, help_text, parse_mode="Markdown", reply_markup=markup)
 
 # Перехват нажатия на текстовую кнопку "❓ Помощь"
 @bot.message_handler(func=lambda message: message.text == "❓ Помощь")
@@ -375,6 +383,110 @@ def process_disconnect(call):
                 text="Связь уже была разорвана."
             )
 
+# ==========================================
+# ПАНЕЛЬ АДМИНИСТРАТОРА (РАССЫЛКА НОВОСТЕЙ)
+# ==========================================
+
+@bot.message_handler(commands=['broadcast'])
+def broadcast_command(message):
+    """
+    Инициализация режима рассылки. 
+    Доступно только пользователям, чей ID есть в списке ADMIN_IDS.
+    """
+    if message.chat.id not in ADMIN_IDS:
+        bot.send_message(message.chat.id, "Я не знаю такую команду 🥺")
+        return
+
+    # Включаем режим ожидания контента для рассылки
+    waiting_for_broadcast[message.chat.id] = True
+    bot.send_message(
+        message.chat.id,
+        "📣 *Режим рассылки*\n\nПришли мне сообщение (текст, фото или видео), которое увидят все.\n"
+        "Кнопки управления появятся после отправки контента.",
+        parse_mode="Markdown",
+        reply_markup=types.ReplyKeyboardRemove() # Убираем меню, чтобы не мешало вводу
+    )
+
+@bot.message_handler(
+    func=lambda m: m.chat.id in waiting_for_broadcast, 
+    content_types=['text', 'photo', 'voice', 'video', 'video_note', 'document', 'sticker', 'audio', 'animation']
+)
+def receive_broadcast_draft(message):
+    """
+    Ловит контент для рассылки, сохраняет его ID в черновики 
+    и выводит инлайн-кнопки для подтверждения.
+    """
+    waiting_for_broadcast.pop(message.chat.id, None)
+    broadcast_drafts[message.chat.id] = message.message_id
+
+    # Создаем меню управления рассылкой
+    markup = types.InlineKeyboardMarkup()
+    btn_send = types.InlineKeyboardButton("Отправить всем 📣", callback_data="bc_send")
+    btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="bc_cancel")
+    
+    # Кнопка отмены слева, кнопка подтверждения справа
+    markup.add(btn_cancel, btn_send)
+
+    bot.reply_to(message, "Контент для рассылки получен. Начинаем?", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("bc_"))
+def process_broadcast_callback(call):
+    """
+    Обрабатывает финальное решение админа: запустить рассылку или удалить черновик.
+    """
+    admin_id = call.message.chat.id
+    
+    # Сценарий: Отмена
+    if call.data == "bc_cancel":
+        broadcast_drafts.pop(admin_id, None)
+        bot.edit_message_text("Рассылка отменена 🛑", admin_id, call.message.message_id)
+        send_menu(admin_id) # Возвращаем пользователя в главное меню
+        return
+
+    # Сценарий: Подтверждение отправки
+    if call.data == "bc_send":
+        draft_id = broadcast_drafts.get(admin_id)
+        if not draft_id:
+            bot.edit_message_text("⚠️ Ошибка: черновик потерян.", admin_id, call.message.message_id)
+            send_menu(admin_id)
+            return
+
+        users = db.get_all_users()
+        success_count = 0
+        
+        bot.edit_message_text(f"⏳ Рассылка запущена для {len(users)} пользователей...", admin_id, call.message.message_id)
+
+        for user_id in users:
+            # Не отправляем рассылку самому себе
+            if user_id == admin_id:
+                continue
+                
+            try:
+                # ПРАВКА: Перед основным контентом отправляем заголовок от разработчика
+                bot.send_message(
+                    user_id, 
+                    "📢 <b>Важное сообщение от разработчика:</b>", 
+                    parse_mode="HTML"
+                )
+                
+                # Копируем само сообщение черновика
+                bot.copy_message(user_id, admin_id, draft_id)
+                success_count += 1
+                
+                # Спим 0.05 сек, чтобы не получить бан от Telegram за слишком частую отправку
+                time.sleep(0.05) 
+            except:
+                # Если пользователь заблокировал бота, просто пропускаем его
+                pass
+
+        # Итоговый отчет для админа
+        bot.send_message(
+            admin_id, 
+            f"✅ *Рассылка завершена!*\nДоставлено: {success_count}",
+            parse_mode="Markdown"
+        )
+        send_menu(admin_id)
+        broadcast_drafts.pop(admin_id, None)
 
 # ==========================================
 # СИСТЕМА ЛЮБОВНЫХ ПОСЛАНИЙ (ЧЕРНОВИКИ)
@@ -473,19 +585,16 @@ def process_draft(call):
 
 @bot.message_handler(content_types=['text', 'photo', 'voice', 'video', 'video_note', 'document', 'sticker', 'audio', 'animation'])
 def catch_all_messages(message):
-    """Сработает, если юзер написал что-то непонятное или очистил историю и набрал текст"""
+    """Сработает, если юзер написал что-то непонятное или очистил историю"""
     
-    # Если юзер есть в базе и у него есть пара
+    # Если юзер есть в базе и у него есть пара — просто возвращаем кнопки
     if db.get_partner(message.chat.id):
         send_menu(message.chat.id, "Я не знаю такую команду 🥺\nНо вот твоё главное меню 👇")
         
-    # Если зарегистрирован, но без пары
-    elif db.get_gender(message.chat.id):
-        bot.send_message(message.chat.id, "Для начала нужно подключиться к котейке! Жми /connect")
-        
-    # Если вообще первый раз (или бот перезапустился и потерял базу)
+    # Если пары нет (неважно, выбран ли пол или юзер вообще новый),
+    # отправляем его в функцию start — она сама всё проверит и выдаст нужный текст!
     else:
-        bot.send_message(message.chat.id, "Кажется, мы еще не знакомы! Нажми /start")
+        start(message)
 
 # ==========================================
 # ТОЧКА ВХОДА (ЗАПУСК БОТА)

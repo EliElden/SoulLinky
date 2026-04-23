@@ -118,3 +118,12 @@ def unlink_partners(user_id):
         return partner_id
         
     return None
+
+def get_all_users():
+    """
+    Возвращает список всех ID пользователей из базы данных для рассылки.
+    """
+    cursor.execute('SELECT user_id FROM users')
+    # fetchall() возвращает список кортежей вида [(id1,), (id2,), ...]
+    # Мы проходимся по нему циклом и достаем чистые ID
+    return [row[0] for row in cursor.fetchall()]
