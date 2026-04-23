@@ -127,3 +127,18 @@ def get_all_users():
     # fetchall() возвращает список кортежей вида [(id1,), (id2,), ...]
     # Мы проходимся по нему циклом и достаем чистые ID
     return [row[0] for row in cursor.fetchall()]
+
+def get_stats():
+    """Возвращает статистику: (всего пользователей, количество образованных пар)"""
+    # Считаем абсолютно всех зарегистрированных юзеров
+    cursor.execute('SELECT COUNT(*) FROM users')
+    total_users = cursor.fetchone()[0]
+    
+    # Считаем тех, у кого заполнено поле partner_id (кто состоит в паре)
+    cursor.execute('SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL')
+    paired_users = cursor.fetchone()[0]
+    
+    # Так как в паре два человека, делим количество на 2
+    total_pairs = paired_users // 2
+    
+    return total_users, total_pairs

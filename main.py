@@ -97,7 +97,11 @@ def help_command(message):
     
     # Проверка прав: если пишет админ, добавляем скрытую команду
     if message.chat.id in ADMIN_IDS:
-        help_text += "\n\n🛠 *Команды разработчика:*\n/broadcast — Массовая рассылка"
+        help_text += (
+            "\n\n🛠 *Команды разработчика:*\n"
+            "/broadcast — Массовая рассылка\n"
+            "/stats — Статистика пользователей" 
+        )
 
     bot.send_message(message.chat.id, help_text, parse_mode="Markdown", reply_markup=markup)
 
@@ -578,6 +582,28 @@ def process_broadcast_callback(call):
         )
         send_menu(admin_id)
         broadcast_drafts.pop(admin_id, None)
+
+@bot.message_handler(commands=['stats'])
+def admin_stats(message):
+    """
+    Выводит статистику бота.
+    Доступно только пользователям, чей ID есть в списке ADMIN_IDS.
+    """
+    if message.chat.id not in ADMIN_IDS:
+        bot.send_message(message.chat.id, "Я не знаю такую команду 🥺")
+        return
+
+    # Получаем данные из базы
+    total_users, total_pairs = db.get_stats()
+    
+    # Формируем красивое сообщение
+    text = (
+        "📊 *Статистика SoulLinky*\n\n"
+        f"👥 Всего котеек в базе: `{total_users}`\n"
+        f"💕 Образовано пар: `{total_pairs}`"
+    )
+    
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 # ==========================================
 # СИСТЕМА ЛЮБОВНЫХ ПОСЛАНИЙ (ЧЕРНОВИКИ)
