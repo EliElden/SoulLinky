@@ -512,14 +512,21 @@ def process_broadcast_callback(call):
 
 @bot.message_handler(commands=['love'])
 def love(message):
+    """Инициализация процесса отправки любовного послания"""
     if db.get_partner(message.chat.id):
-        # Переводим пользователя в состояние ожидания контента
+        # Включаем состояние ожидания сообщения
         waiting_for_message[message.chat.id] = True
+        
+        # Создаем инлайн-кнопку для отмены
+        markup = types.InlineKeyboardMarkup()
+        btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_love")
+        markup.add(btn_cancel)
+
         bot.send_message(
             message.chat.id, 
             "Пришли мне послание (текст, фото, стикер, голос или кружочек) 💌\n"
             "Чтобы отправить фото с текстом, просто добавь описание к картинке!", 
-            reply_markup=types.ReplyKeyboardRemove() # Прячем меню на время ввода
+            reply_markup=markup # Показываем кнопку отмены
         )
     else:
         send_no_partner_error(message.chat.id)
@@ -527,6 +534,20 @@ def love(message):
 @bot.message_handler(func=lambda message: message.text == "💌 Отправить послание")
 def love_button_handler(message):
     love(message)
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_love")
+def cancel_love_callback(call):
+    """Срабатывает, если юзер нажал 'Отменить' в процессе подготовки послания"""
+    user_id = call.message.chat.id
+    
+    # Убираем пользователя из режима ожидания сообщения
+    waiting_for_message.pop(user_id, None)
+    
+    # Редактируем сообщение, чтобы убрать кнопку и текст запроса
+    bot.edit_message_text("Отправка послания отменена 🛑", user_id, call.message.message_id)
+    
+    # Возвращаем главное меню
+    send_menu(user_id, "Главное меню 👇")
 
 # Обработчик любых типов сообщений для создания черновика
 @bot.message_handler(
