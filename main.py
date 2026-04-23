@@ -309,7 +309,7 @@ def set_partner(message):
         bot.send_message(message.chat.id, "⚠️ У этого котейки уже есть пара! Подключение невозможно.")
         return
             
-    # НОВАЯ ЛОГИКА: Сохраняем во временный словарь и выдаем кнопки инициатору
+    #Сохраняем во временный словарь и выдаем кнопки инициатору
     waiting_for_partner.pop(message.chat.id, None)
     pending_requests_sender[message.chat.id] = partner_id
 
@@ -318,7 +318,10 @@ def set_partner(message):
     btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="req_cancel")
     markup.add(btn_cancel, btn_send)
 
-    bot.reply_to(message, "Котейка найден(а)! Отправить запрос на подключение?", reply_markup=markup)
+    # Узнаем пол партнера и подбираем правильное слово
+    found_text = get_text_by_gender(partner_id, "Котик найден! 🐈‍⬛", "Кошечка найдена! 🐈")
+
+    bot.reply_to(message, f"{found_text} Отправить запрос на подключение?", reply_markup=markup)
 
 # --- ЭТАП 1: Инициатор решает, отправить запрос или нет ---
 @bot.callback_query_handler(func=lambda call: call.data in ["req_send", "req_cancel"])
