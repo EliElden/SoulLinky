@@ -180,9 +180,23 @@ def connect(message):
 
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_partner)
 def set_partner(message):
+    if message.content_type != 'text':
+        bot.send_message(message.chat.id, "❌ Пожалуйста, отправь ID или никнейм текстом.")
+        return
+
+    if message.text in ["💌 Отправить послание", "❓ Помощь", "🔄 Перезапуск"]:
+        waiting_for_partner.pop(message.chat.id, None)
+        if message.text == "💌 Отправить послание":
+            love(message)
+        elif message.text == "❓ Помощь":
+            help_command(message)
+        else:
+            start(message)
+        return
+
     if message.text.startswith('/'):
         waiting_for_partner.pop(message.chat.id, None)
-        bot.send_message(message.chat.id, "Ввод отменен. Напиши команду еще раз:")
+        bot.send_message(message.chat.id, "Ввод отменен.")
         return
 
     raw_input = message.text.strip()
@@ -225,7 +239,10 @@ def set_partner(message):
         return 
             
     db.link_partners(message.chat.id, partner_id)
+    
     waiting_for_partner.pop(message.chat.id, None)
+    waiting_for_partner.pop(partner_id, None) 
+    waiting_for_message.pop(partner_id, None) 
 
     action_text = get_text_by_gender(message.chat.id, "подключен", "подключена")
     target_text = get_text_by_gender(partner_id, "к своему котику! 🐈‍⬛", "к своей кошечке! 🐈")
@@ -327,6 +344,16 @@ def love_button_handler(message):
     content_types=['text', 'photo', 'voice', 'video', 'video_note', 'document', 'sticker', 'audio', 'animation']
 )
 def receive_love_draft(message):
+    if message.content_type == 'text' and message.text in ["💌 Отправить послание", "❓ Помощь", "🔄 Перезапуск"]:
+        waiting_for_message.pop(message.chat.id, None)
+        if message.text == "💌 Отправить послание":
+            love(message)
+        elif message.text == "❓ Помощь":
+            help_command(message)
+        else:
+            start(message)
+        return
+
     if message.content_type == 'text' and message.text.startswith('/'):
         waiting_for_message.pop(message.chat.id, None)
         send_menu(message.chat.id, "Отмена.")
