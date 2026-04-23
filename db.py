@@ -129,16 +129,22 @@ def get_all_users():
     return [row[0] for row in cursor.fetchall()]
 
 def get_stats():
-    """Возвращает статистику: (всего пользователей, количество образованных пар)"""
-    # Считаем абсолютно всех зарегистрированных юзеров
+    """
+    Возвращает статистику: общее кол-во пользователей и кол-во подтвержденных пар.
+    Использует JOIN для проверки взаимности связи.
+    """
+    # 1. Считаем общее количество уникальных пользователей
     cursor.execute('SELECT COUNT(*) FROM users')
     total_users = cursor.fetchone()[0]
     
-    # Считаем тех, у кого заполнено поле partner_id (кто состоит в паре)
-    cursor.execute('SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL')
-    paired_users = cursor.fetchone()[0]
-    
-    # Так как в паре два человека, делим количество на 2
-    total_pairs = paired_users // 2
+    # 2. Считаем только взаимные пары (А привязан к Б, а Б к А)
+    # Условие u1.user_id < u2.user_id нужно, чтобы не посчитать одну пару дважды
+    cursor.execute('''
+        SELECT COUNT(*) 
+        FROM users u1
+        JOIN users u2 ON u1.partner_id = u2.user_id
+        WHERE u2.partner_id = u1.user_id AND u1.user_id < u2.user_id
+    ''')
+    total_pairs = cursor.fetchone()[0]
     
     return total_users, total_pairs
