@@ -95,6 +95,11 @@ def help_button_handler(message):
 
 @bot.message_handler(commands=['start'])
 def start(message):
+    # СБРОС ЗАВИСШИХ СОСТОЯНИЙ (если юзер очистил историю и перезапустил бота)
+    waiting_for_partner.pop(message.chat.id, None)
+    waiting_for_message.pop(message.chat.id, None)
+    draft_messages.pop(message.chat.id, None)
+
     gender = db.get_gender(message.chat.id)
 
     # Ветвление логики: если пользователь уже зарегистрирован (пол указан)
@@ -462,6 +467,25 @@ def process_draft(call):
         send_menu(user_id)
         draft_messages.pop(user_id, None)
 
+# ==========================================
+# ЛОВУШКА ДЛЯ СЛУЧАЙНЫХ СООБЩЕНИЙ (ЕСЛИ ОЧИСТИЛИ ИСТОРИЮ)
+# ==========================================
+
+@bot.message_handler(content_types=['text', 'photo', 'voice', 'video', 'video_note', 'document', 'sticker', 'audio', 'animation'])
+def catch_all_messages(message):
+    """Сработает, если юзер написал что-то непонятное или очистил историю и набрал текст"""
+    
+    # Если юзер есть в базе и у него есть пара
+    if db.get_partner(message.chat.id):
+        send_menu(message.chat.id, "Я не знаю такую команду 🥺\nНо вот твоё главное меню 👇")
+        
+    # Если зарегистрирован, но без пары
+    elif db.get_gender(message.chat.id):
+        bot.send_message(message.chat.id, "Для начала нужно подключиться к котейке! Жми /connect")
+        
+    # Если вообще первый раз (или бот перезапустился и потерял базу)
+    else:
+        bot.send_message(message.chat.id, "Кажется, мы еще не знакомы! Нажми /start")
 
 # ==========================================
 # ТОЧКА ВХОДА (ЗАПУСК БОТА)
