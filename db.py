@@ -10,19 +10,31 @@ cursor = conn.cursor()
 
 
 def init_db():
-    """
-    Инициализирует базу данных при запуске бота.
-    Создает таблицу users, если её еще нет, и безопасно добавляет
-    новые колонки (например, username) для старых пользователей.
-    """
-    # 1. Создаем базовую структуру таблицы
+    """Инициализация базы данных: создание таблиц, если они не существуют."""
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
+            username TEXT,
             gender TEXT,
-            partner_id INTEGER
+            partner_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # Новая таблица для статистики сообщений между парами
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS messages_stats (
+            user1_id INTEGER,
+            user2_id INTEGER,
+            message_count INTEGER DEFAULT 0,
+            last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user1_id, user2_id)
+        )
+    ''')
+
+    # Если нужно, можно добавить и другие таблицы (например, drafts)
+    # cursor.execute('''CREATE TABLE IF NOT EXISTS drafts ...''')
+
     conn.commit()
 
     # 2. Получаем информацию о текущих колонках в таблице (используем системную команду PRAGMA)
@@ -71,6 +83,11 @@ def get_id_by_username(username):
     # Возвращаем первый элемент кортежа (сам ID), если результат есть
     return result[0] if result else None
 
+def get_username(user_id):
+    """Возвращает username пользователя по его ID."""
+    cursor.execute('SELECT username FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    return result[0] if result else None
 
 def link_partners(user_id, partner_id):
     """
@@ -128,6 +145,7 @@ def get_all_users():
     # Мы проходимся по нему циклом и достаем чистые ID
     return [row[0] for row in cursor.fetchall()]
 
+# ------> Статистика
 def get_stats():
     """
     Возвращает статистику: общее кол-во пользователей и кол-во подтвержденных пар.
@@ -148,3 +166,42 @@ def get_stats():
     total_pairs = cursor.fetchone()[0]
     
     return total_users, total_pairs
+
+def increment_message_count(user_id, partner_id):
+    """Увеличивает счётчик сообщений между двумя партнёрами."""
+    # Определяем пару в каноническом порядке (меньший ID — первый)
+    user1, user2 = sorted([user_id, partner_id])
+    # Пытаемся увеличить существующий счётчик
+    cursor.execute('''
+        UPDATE messages_stats
+        SET message_count = message_count + 1, last_message_at = CURRENT_TIMESTAMP
+        WHERE user1_id = ? AND user2_id = ?
+    ''', (user1, user2))
+
+    if cursor.rowcount == 0:
+        # Если записи не было — создаём новую со счётчиком 1
+        cursor.execute('''
+            INSERT INTO messages_stats (user1_id, user2_id, message_count, last_message_at)
+            VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+        ''', (user1, user2))
+
+    conn.commit()
+
+def get_partner_stats(user_id):
+    """Возвращает статистику для пары пользователя: ID, общий счётчик, ID партнёра."""
+    partner_id = get_partner(user_id)
+    if not partner_id:
+        return None
+
+    user1, user2 = sorted([user_id, partner_id])
+
+    cursor.execute('''
+        SELECT message_count
+        FROM messages_stats
+        WHERE user1_id = ? AND user2_id = ?
+    ''', (user1, user2))
+
+    result = cursor.fetchone()
+    message_count = result[0] if result else 0
+
+    return user_id, message_count, partner_id

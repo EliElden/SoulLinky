@@ -1,7 +1,7 @@
 from config import bot
 from telebot import types
 import time
-import db 
+import db
 from config import bot, ADMIN_IDS
 
 # --- ГЛОБАЛЬНЫЕ СОСТОЯНИЯ ---
@@ -92,7 +92,8 @@ def help_command(message):
         "/id — Узнать свой числовой ID\n"
         "/connect — Подключиться к котейке\n"
         "/disconnect — Отключиться от котейки 💔\n"
-        "/love — Отправить послание котейке 💌"
+        "/love — Отправить послание котейке 💌\n"
+        "/partner_stats — Статистика общения с партнёром"
     )
     
     # Проверка прав: если пишет админ, добавляем скрытую команду
@@ -608,6 +609,38 @@ def admin_stats(message):
     
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
+@bot.message_handler(commands=['partner_stats'])
+def partner_stats(message):
+    """Показывает статистику общения для пары."""
+    user_id = message.chat.id
+    partner_id = db.get_partner(user_id)
+
+    if not partner_id:
+        send_no_partner_error(user_id)
+        return
+
+    stats = db.get_partner_stats(user_id)
+    if not stats:
+        bot.send_message(user_id, "📊 Статистика пока пуста. Отправьте первое послание, чтобы начать счётчик!")
+        return
+
+    _, message_count, partner_id = stats
+
+    # Получаем никнейм партнёра для красивого отображения
+    partner_username = db.get_username(partner_id)
+    if not partner_username:
+        partner_username = f"пользователь {partner_id}"
+
+    # Формируем текст статистики
+    text = (
+        "📊 *Статистика вашей пары* 📊\n\n"
+        f"💬 *Сообщений отправлено друг другу:* `{message_count}`\n"
+        f"👥 Твой партнёр: @{partner_username}\n\n"
+        "❤️ *Совет:* продолжать общаться — это лучший способ укрепить связь!"
+    )
+
+    bot.send_message(user_id, text, parse_mode="Markdown")
+
 # ==========================================
 # СИСТЕМА ЛЮБОВНЫХ ПОСЛАНИЙ (ЧЕРНОВИКИ)
 # ==========================================
@@ -707,11 +740,14 @@ def process_draft(call):
             bot.edit_message_text("⚠️ Ошибка: черновик не найден или бот отключился.", user_id, call.message.message_id)
             send_menu(user_id)
             return
-            
+
+        # Увеличиваем счётчик сообщений для пары
+        db.increment_message_count(user_id, partner_id)
+
         # 1. Отправляем партнеру "шапку" сообщения
         sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
         bot.send_message(partner_id, f"💌 Новое послание от {sender_text}:")
-        
+
         # 2. Магия copy_message: полностью копирует исходное сообщение (стикер/фото/кружок) партнеру
         bot.copy_message(partner_id, user_id, message_id)
 
