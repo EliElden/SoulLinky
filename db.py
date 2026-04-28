@@ -3,6 +3,7 @@ import sqlite3
 # ==========================================
 # НАСТРОЙКА ПОДКЛЮЧЕНИЯ К БАЗЕ ДАННЫХ
 # ==========================================
+
 # check_same_thread=False необходим для многопоточных приложений (каким является telebot),
 # чтобы разные потоки могли безопасно обращаться к одному файлу базы данных.
 conn = sqlite3.connect('database.db', check_same_thread=False)
@@ -12,10 +13,7 @@ cursor = conn.cursor()
 def init_db():
     """
     Инициализирует базу данных при запуске бота.
-    Создает таблицу users, если её еще нет, и безопасно добавляет
-    новые колонки (например, username) для старых пользователей.
     """
-    # 1. Создаем базовую структуру таблицы
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -23,14 +21,20 @@ def init_db():
             partner_id INTEGER
         )
     ''')
+    
+    #Таблица для черного списка
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS blocked_users (
+            blocker_id INTEGER,
+            blocked_id INTEGER,
+            PRIMARY KEY (blocker_id, blocked_id)
+        )
+    ''')
     conn.commit()
 
-    # 2. Получаем информацию о текущих колонках в таблице (используем системную команду PRAGMA)
     cursor.execute("PRAGMA table_info(users)")
     existing_columns = [column[1] for column in cursor.fetchall()]
 
-    # 3. Механизм "миграции": если колонки username нет в старой базе, добавляем её.
-    # Это спасает базу от поломки при выкате обновлений для бота.
     if 'username' not in existing_columns:
         cursor.execute('ALTER TABLE users ADD COLUMN username TEXT')
         print("🔧 База данных обновлена: добавлена колонка 'username'")
@@ -148,3 +152,39 @@ def get_stats():
     total_pairs = cursor.fetchone()[0]
     
     return total_users, total_pairs
+
+# --- ФУНКЦИИ ДЛЯ ЧЕРНОГО СПИСКА ---
+
+def block_user(blocker_id, blocked_id):
+    """Добавляет пользователя в черный список (игнорирует, если уже там)"""
+    cursor.execute('INSERT OR IGNORE INTO blocked_users (blocker_id, blocked_id) VALUES (?, ?)', (blocker_id, blocked_id))
+    conn.commit()
+
+def unblock_user(blocker_id, blocked_id):
+    """Удаляет пользователя из черного списка"""
+    cursor.execute('DELETE FROM blocked_users WHERE blocker_id = ? AND blocked_id = ?', (blocker_id, blocked_id))
+    conn.commit()
+
+def is_blocked(blocker_id, blocked_id):
+    """Проверяет, заблокировал ли blocker_id пользователя blocked_id"""
+    cursor.execute('SELECT 1 FROM blocked_users WHERE blocker_id = ? AND blocked_id = ?', (blocker_id, blocked_id))
+    return cursor.fetchone() is not None
+
+def get_blocked_users(blocker_id):
+    """Возвращает список заблокированных ID и их никнеймов (если есть)"""
+    cursor.execute('''
+        SELECT b.blocked_id, u.username
+        FROM blocked_users b
+        LEFT JOIN users u ON b.blocked_id = u.user_id
+        WHERE b.blocker_id = ?
+    ''', (blocker_id,))
+    return cursor.fetchall()
+
+def get_username(user_id):
+    """
+    Достает никнейм пользователя по его числовому ID.
+    Возвращает никнейм (без @) или None, если у пользователя нет юзернейма.
+    """
+    cursor.execute('SELECT username FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    return result[0] if result and result[0] else None
