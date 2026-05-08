@@ -21,8 +21,8 @@ def init_db():
             partner_id INTEGER
         )
     ''')
-    
-    #Таблица для черного списка
+
+    # Таблица для черного списка
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS blocked_users (
             blocker_id INTEGER,
@@ -30,6 +30,30 @@ def init_db():
             PRIMARY KEY (blocker_id, blocked_id)
         )
     ''')
+
+    # Важные даты
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS important_dates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user1_id INTEGER NOT NULL,
+            user2_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            event_date TEXT NOT NULL,
+            is_annual INTEGER DEFAULT 0,
+            remind_days_before INTEGER DEFAULT 7,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Отслеживание отправленных напоминаний
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reminders_sent (
+            date_id INTEGER,
+            reminder_year INTEGER,
+            PRIMARY KEY (date_id, reminder_year)
+        )
+    ''')
+
     conn.commit()
 
     cursor.execute("PRAGMA table_info(users)")
@@ -188,3 +212,80 @@ def get_username(user_id):
     cursor.execute('SELECT username FROM users WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     return result[0] if result and result[0] else None
+
+# ==========================================
+# ФУНКЦИИ ДЛЯ ВАЖНЫХ ДАТ
+# ==========================================
+
+def add_important_date(user_id, partner_id, title, event_date, is_annual, remind_days_before):
+    """
+    Добавляет общую важную дату для пары.
+    user1_id — кто добавил, user2_id — партнёр.
+    """
+    cursor.execute('''
+        INSERT INTO important_dates (user1_id, user2_id, title, event_date, is_annual, remind_days_before)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (user_id, partner_id, title, event_date, is_annual, remind_days_before))
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_dates_for_user(user_id):
+    """
+    Возвращает все важные даты, где участвует пользователь.
+    Возвращает список кортежей: (id, title, event_date, is_annual, remind_days_before)
+    """
+    cursor.execute('''
+        SELECT id, title, event_date, is_annual, remind_days_before 
+        FROM important_dates 
+        WHERE user1_id = ? OR user2_id = ?
+        ORDER BY event_date DESC
+    ''', (user_id, user_id))
+    return cursor.fetchall()
+
+
+def delete_date(date_id, user_id):
+    """
+    Удаляет важную дату.
+    Пользователь может удалить только ту дату, где он участвует (как user1 или user2).
+    """
+    cursor.execute('''
+        DELETE FROM important_dates 
+        WHERE id = ? AND (user1_id = ? OR user2_id = ?)
+    ''', (date_id, user_id, user_id))
+    conn.commit()
+    return cursor.rowcount > 0  # True если удалили, False если не нашли
+
+
+def get_dates_to_remind(today_date):
+    """
+    Возвращает список дат, о которых нужно напомнить сегодня.
+    today_date = 'YYYY-MM-DD'
+    Возвращает: (id, user1_id, user2_id, title, event_date, is_annual, remind_days_before)
+    """
+    cursor.execute('''
+        SELECT d.id, d.user1_id, d.user2_id, d.title, d.event_date, 
+               d.is_annual, d.remind_days_before
+        FROM important_dates d
+        WHERE d.is_annual = 0 
+              AND date(d.event_date, '-' || d.remind_days_before || ' days') = ?
+        UNION
+        SELECT d.id, d.user1_id, d.user2_id, d.title, d.event_date, 
+               d.is_annual, d.remind_days_before
+        FROM important_dates d
+        WHERE d.is_annual = 1 
+              AND substr(d.event_date, 6) = substr(date(?, '+' || d.remind_days_before || ' days'), 6)
+    ''', (today_date, today_date))
+    return cursor.fetchall()
+
+
+def was_reminder_sent(date_id, year):
+    """Проверяет, было ли уже отправлено напоминание в этом году"""
+    cursor.execute('SELECT 1 FROM reminders_sent WHERE date_id = ? AND reminder_year = ?', (date_id, year))
+    return cursor.fetchone() is not None
+
+
+def mark_reminder_sent(date_id, year):
+    """Отмечает, что напоминание за этот год отправлено"""
+    cursor.execute('INSERT OR IGNORE INTO reminders_sent VALUES (?, ?)', (date_id, year))
+    conn.commit()

@@ -3,6 +3,9 @@ from telebot import types
 import time
 import db 
 from config import bot, ADMIN_IDS
+from datetime import datetime
+import threading
+import time
 
 # --- ГЛОБАЛЬНЫЕ СОСТОЯНИЯ ---
 # Словари для временного хранения данных в оперативной памяти бота.
@@ -16,6 +19,12 @@ pending_requests_sender = {}   # Временное хранилище (Отпр
 pending_requests_receiver = {} # Временное хранилище (Принять/Отклонить)
 waiting_for_block = {}   # Ожидание ID для блокировки
 waiting_for_unblock = {} # Ожидание ID для разблокировки
+# Состояния для добавления важной даты
+waiting_for_date_title = {}      # ожидание ввода названия
+waiting_for_date_value = {}      # ожидание ввода даты (хранит название)
+waiting_for_date_type = {}       # ожидание выбора типа (хранит (название, дата))
+waiting_for_date_remind = {}     # ожидание выбора срока (хранит (название, дата, is_annual))
+waiting_for_date_partner = {}    # хранит partner_id для текущей сессии
 
 # ==========================================
 # ФУНКЦИИ-ПОМОЩНИКИ (ИНТЕРФЕЙС И ТЕКСТЫ)
@@ -94,7 +103,7 @@ def get_user_display_name(user_id):
 @bot.message_handler(commands=['help'])
 def help_command(message):
     markup = get_main_keyboard(message.chat.id)
-    
+
     help_text = (
         "Доступные команды:\n\n"
         "/start — Перезапустить бота\n"
@@ -104,6 +113,10 @@ def help_command(message):
         "/connect — Подключиться к котейке\n"
         "/disconnect — Отключиться от котейки 💔\n"
         "/love — Отправить послание котейке 💌\n\n"
+        "📅 *Важные даты:*\n"
+        "/adddate — Добавить общую важную дату\n"
+        "/mydates — Список всех важных дат\n"
+        "/deldate — Удалить важную дату\n\n"
         "🛡 *Безопасность:*\n"
         "/block — Заблокировать пользователя\n"
         "/unblock — Разблокировать пользователя\n"
@@ -879,6 +892,207 @@ def process_block_unblock(message):
     send_menu(user_id)
 
 # ==========================================
+# ВАЖНЫЕ ДАТЫ
+# ==========================================
+#/adddate и её обработчики
+@bot.message_handler(commands=['adddate'])
+def add_date_start(message):
+    """Начинает процесс добавления важной даты"""
+    partner_id = db.get_partner(message.chat.id)
+    if not partner_id:
+        bot.send_message(message.chat.id, "❌ У тебя нет пары! Сначала подключись через /connect")
+        return
+
+    waiting_for_date_partner[message.chat.id] = partner_id
+    waiting_for_date_title[message.chat.id] = True
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+
+    bot.send_message(message.chat.id, "📅 Введи название важной даты (например: «Годовщина свадьбы»):",
+                     reply_markup=markup)
+
+
+@bot.message_handler(func=lambda m: m.chat.id in waiting_for_date_title)
+def get_date_title(message):
+    """Получает название даты"""
+    if message.text.startswith('/'):
+        waiting_for_date_title.pop(message.chat.id, None)
+        waiting_for_date_partner.pop(message.chat.id, None)
+        send_menu(message.chat.id, "Отмена.")
+        return
+
+    if message.text in ["💌 Отправить послание", "❓ Помощь", "🔄 Перезапуск"]:
+        waiting_for_date_title.pop(message.chat.id, None)
+        waiting_for_date_partner.pop(message.chat.id, None)
+        if message.text == "💌 Отправить послание":
+            love(message)
+        elif message.text == "❓ Помощь":
+            help_command(message)
+        else:
+            start(message)
+        return
+
+    waiting_for_date_title.pop(message.chat.id, None)
+    waiting_for_date_value[message.chat.id] = message.text
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+    bot.send_message(message.chat.id, "📆 Введи дату в формате ДД.ММ.ГГГГ (например: 14.02.2025):",
+                     reply_markup=markup)
+
+
+@bot.message_handler(func=lambda m: m.chat.id in waiting_for_date_value)
+def get_date_value(message):
+    """Получает дату"""
+    if message.text.startswith('/'):
+        waiting_for_date_value.pop(message.chat.id, None)
+        waiting_for_date_partner.pop(message.chat.id, None)
+        send_menu(message.chat.id, "Отмена.")
+        return
+
+    try:
+        date_obj = datetime.strptime(message.text, "%d.%m.%Y")
+        event_date = date_obj.strftime("%Y-%m-%d")
+
+        title = waiting_for_date_value.pop(message.chat.id, None)
+        waiting_for_date_type[message.chat.id] = (title, event_date, message.text)
+
+        markup = types.InlineKeyboardMarkup()
+        btn_once = types.InlineKeyboardButton("Однократная 🔂", callback_data="date_type_once")
+        btn_annual = types.InlineKeyboardButton("Ежегодная 🔁", callback_data="date_type_annual")
+        btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate")
+        markup.add(btn_once, btn_annual)
+        markup.add(btn_cancel)
+
+        bot.send_message(message.chat.id, "🔄 Это повторяющаяся дата (каждый год) или однократная?",
+                         reply_markup=markup)
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Неверный формат! Введи дату как ДД.ММ.ГГГГ (например: 14.02.2025)")
+
+
+@bot.callback_query_handler(func=lambda call: call.data in ["date_type_once", "date_type_annual", "cancel_adddate"])
+def process_date_type(call):
+    """Обрабатывает выбор типа даты (ежегодная/однократная)"""
+    user_id = call.message.chat.id
+
+    if call.data == "cancel_adddate":
+        for d in [waiting_for_date_title, waiting_for_date_value, waiting_for_date_type,
+                  waiting_for_date_remind, waiting_for_date_partner]:
+            d.pop(user_id, None)
+        bot.edit_message_text("❌ Добавление даты отменено.", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
+
+    is_annual = 1 if call.data == "date_type_annual" else 0
+    title, event_date, original_date_str = waiting_for_date_type[user_id]
+    waiting_for_date_type.pop(user_id, None)
+    waiting_for_date_remind[user_id] = (title, event_date, is_annual, original_date_str)
+
+    markup = types.InlineKeyboardMarkup()
+    for days, label in [(1, "За 1 день"), (3, "За 3 дня"), (7, "За неделю"), (30, "За месяц")]:
+        markup.add(types.InlineKeyboardButton(label, callback_data=f"remind_{days}"))
+    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+
+    bot.edit_message_text("⏰ За сколько дней до даты прислать напоминание?",
+                          user_id, call.message.message_id, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("remind_"))
+def process_remind_days(call):
+    """Сохраняет дату с выбранным сроком напоминания"""
+    user_id = call.message.chat.id
+    remind_days = int(call.data.split("_")[1])
+
+    if user_id not in waiting_for_date_remind:
+        bot.answer_callback_query(call.id, "❌ Сессия истекла, начни заново через /adddate")
+        return
+
+    title, event_date, is_annual, original_date_str = waiting_for_date_remind[user_id]
+    partner_id = waiting_for_date_partner.get(user_id)
+
+    if not partner_id:
+        bot.edit_message_text("❌ Ошибка: партнёр не найден.", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
+
+    # Очищаем состояния
+    waiting_for_date_remind.pop(user_id, None)
+    waiting_for_date_partner.pop(user_id, None)
+
+    # Сохраняем в БД
+    db.add_important_date(user_id, partner_id, title, event_date, is_annual, remind_days)
+
+    date_display = original_date_str
+    if is_annual:
+        date_display = original_date_str[5:]  # покажем только день-месяц
+
+    bot.edit_message_text(
+        f"✅ Дата «{title}» ({date_display}) добавлена!\n"
+        f"⏰ Напоминание придёт за {remind_days} дн.",
+        user_id, call.message.message_id
+    )
+    send_menu(user_id)
+
+#mydates
+@bot.message_handler(commands=['mydates'])
+def list_dates(message):
+    """Показывает все важные даты пользователя"""
+    dates = db.get_dates_for_user(message.chat.id)
+    if not dates:
+        bot.send_message(message.chat.id, "📭 У вас пока нет общих важных дат. Добавь через /adddate")
+        return
+
+    today = datetime.now().date()
+
+    text = "📅 *Ваши общие важные даты:*\n\n"
+    for date_id, title, event_date, is_annual, remind_days in dates:
+        date_obj = datetime.strptime(event_date, "%Y-%m-%d").date()
+
+        if is_annual:
+            # Следующее событие в этом году или следующем
+            next_date = date_obj.replace(year=today.year)
+            if next_date < today:
+                next_date = next_date.replace(year=today.year + 1)
+            days_left = (next_date - today).days
+            date_str = f"каждый год {event_date[5:]}"
+        else:
+            days_left = (date_obj - today).days
+            date_str = event_date
+
+        if days_left >= 0:
+            status = f" (через {days_left} дн.)"
+        else:
+            status = " (прошла)"
+
+        text += f"• *{title}* — {date_str}{status}\n"
+        text += f"  `id:{date_id}` | напом. за {remind_days} дн.\n"
+
+    text += "\nУдалить: `/deldate <id>`"
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+#deldate
+@bot.message_handler(commands=['deldate'])
+def delete_date(message):
+    """Удаляет важную дату по ID"""
+    args = message.text.split()
+    if len(args) != 2:
+        bot.send_message(message.chat.id, "❌ Использование: /deldate <id_даты>\nID можно посмотреть в /mydates")
+        return
+
+    try:
+        date_id = int(args[1])
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ ID должен быть числом")
+        return
+
+    if db.delete_date(date_id, message.chat.id):
+        bot.send_message(message.chat.id, f"✅ Дата с ID {date_id} удалена.")
+    else:
+        bot.send_message(message.chat.id, f"❌ Дата с ID {date_id} не найдена или у вас нет прав на её удаление.")
+
+
+# ==========================================
 # ЛОВУШКА ДЛЯ СЛУЧАЙНЫХ СООБЩЕНИЙ (ЕСЛИ ОЧИСТИЛИ ИСТОРИЮ)
 # ==========================================
 
@@ -894,6 +1108,55 @@ def catch_all_messages(message):
     # отправляем его в функцию start — она сама всё проверит и выдаст нужный текст!
     else:
         start(message)
+
+
+# ==========================================
+# СИСТЕМА НАПОМИНАНИЙ (ФОНОВЫЙ ПОТОК)
+# ==========================================
+
+def check_and_send_reminders():
+    """Проверяет и отправляет напоминания о важных датах"""
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    dates_to_remind = db.get_dates_to_remind(today_str)
+
+    for date_id, user1_id, user2_id, title, event_date, is_annual, remind_days in dates_to_remind:
+        current_year = datetime.now().year
+
+        # Проверяем, не отправляли ли уже напоминание в этом году
+        if db.was_reminder_sent(date_id, current_year):
+            continue
+
+        # Отправляем обоим партнёрам
+        for user_id in (user1_id, user2_id):
+            try:
+                if is_annual:
+                    msg = f"🎉 *Ежегодное напоминание!*\nЧерез {remind_days} дн. — {title} ({event_date[5:]})"
+                else:
+                    msg = f"📅 *Напоминание!*\nЧерез {remind_days} дн. — {title} ({event_date})"
+
+                bot.send_message(user_id, msg, parse_mode="Markdown")
+            except Exception as e:
+                print(f"Не удалось отправить напоминание {user_id}: {e}")
+
+        # Отмечаем, что напоминание отправлено
+        db.mark_reminder_sent(date_id, current_year)
+
+
+def reminder_loop():
+    """Запускается в отдельном потоке и проверяет напоминания каждые 6 часов"""
+    while True:
+        try:
+            check_and_send_reminders()
+        except Exception as e:
+            print(f"Ошибка в reminder_loop: {e}")
+        time.sleep(21600)  # 6 часов
+
+
+# Запускаем поток с напоминаниями (перед main)
+reminder_thread = threading.Thread(target=reminder_loop, daemon=True)
+reminder_thread.start()
+
 
 # ==========================================
 # ТОЧКА ВХОДА (ЗАПУСК БОТА)
