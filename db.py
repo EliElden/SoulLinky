@@ -54,6 +54,20 @@ def init_db():
         )
     ''')
 
+    # Общий вишлист
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS wishlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user1_id INTEGER NOT NULL,
+            user2_id INTEGER NOT NULL,
+            creator_id INTEGER NOT NULL,
+            wish_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
 
     cursor.execute("PRAGMA table_info(users)")
@@ -292,3 +306,40 @@ def mark_reminder_sent(date_id, year):
     """Отмечает, что напоминание за этот год отправлено"""
     cursor.execute('INSERT OR IGNORE INTO reminders_sent VALUES (?, ?)', (date_id, year))
     conn.commit()
+
+
+# ==========================================
+# ФУНКЦИИ ДЛЯ ОБЩЕГО ВИШЛИСТА
+# ==========================================
+
+def add_wish(user1_id, user2_id, creator_id, wish_type, title, description):
+    cursor.execute('''
+        INSERT INTO wishlist
+        (user1_id, user2_id, creator_id, wish_type, title, description)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (user1_id, user2_id, creator_id, wish_type, title, description))
+
+    conn.commit()
+    return cursor.lastrowid
+
+def get_wishlist(user_id):
+    cursor.execute('''
+        SELECT w.id, w.wish_type, w.title, w.description,
+               w.creator_id, u.username
+        FROM wishlist w
+        LEFT JOIN users u ON w.creator_id = u.user_id
+        WHERE w.user1_id = ? OR w.user2_id = ?
+        ORDER BY w.created_at DESC
+    ''', (user_id, user_id))
+
+    return cursor.fetchall()
+
+def delete_wish(wish_id, user_id):
+    cursor.execute('''
+        DELETE FROM wishlist
+        WHERE id = ?
+        AND (user1_id = ? OR user2_id = ?)
+    ''', (wish_id, user_id, user_id))
+
+    conn.commit()
+    return cursor.rowcount > 0
