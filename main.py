@@ -1025,7 +1025,7 @@ def process_remind_days(call):
 
     date_display = original_date_str
     if is_annual:
-        date_display = original_date_str[5:]  # покажем только день-месяц
+        date_display = original_date_str[:5]  # покажем только день-месяц
 
     bot.edit_message_text(
         f"✅ Дата «{title}» ({date_display}) добавлена!\n"
@@ -1153,10 +1153,6 @@ def reminder_loop():
         time.sleep(21600)  # 6 часов
 
 
-# Запускаем поток с напоминаниями (перед main)
-reminder_thread = threading.Thread(target=reminder_loop, daemon=True)
-reminder_thread.start()
-
 
 # ==========================================
 # ТОЧКА ВХОДА (ЗАПУСК БОТА)
@@ -1164,6 +1160,11 @@ reminder_thread.start()
 
 if __name__ == "__main__":
     db.init_db() # Инициализация структуры базы данных при старте
+
+    #Запуск потока (напоминания о датах)
+    reminder_thread = threading.Thread(target=reminder_loop, daemon=True)
+    reminder_thread.start()
+
     print("Бот запущен и готов к работе...")
     while True:
         try:

@@ -260,22 +260,25 @@ def delete_date(date_id, user_id):
 def get_dates_to_remind(today_date):
     """
     Возвращает список дат, о которых нужно напомнить сегодня.
-    today_date = 'YYYY-MM-DD'
-    Возвращает: (id, user1_id, user2_id, title, event_date, is_annual, remind_days_before)
     """
+
     cursor.execute('''
-        SELECT d.id, d.user1_id, d.user2_id, d.title, d.event_date, 
+        SELECT d.id, d.user1_id, d.user2_id, d.title, d.event_date,
                d.is_annual, d.remind_days_before
         FROM important_dates d
-        WHERE d.is_annual = 0 
+        WHERE d.is_annual = 0
               AND date(d.event_date, '-' || d.remind_days_before || ' days') = ?
+
         UNION
-        SELECT d.id, d.user1_id, d.user2_id, d.title, d.event_date, 
+
+        SELECT d.id, d.user1_id, d.user2_id, d.title, d.event_date,
                d.is_annual, d.remind_days_before
         FROM important_dates d
-        WHERE d.is_annual = 1 
-              AND substr(d.event_date, 6) = substr(date(?, '+' || d.remind_days_before || ' days'), 6)
+        WHERE d.is_annual = 1
+              AND strftime('%m-%d', d.event_date) =
+                  strftime('%m-%d', date(?, '+' || d.remind_days_before || ' days'))
     ''', (today_date, today_date))
+
     return cursor.fetchall()
 
 
