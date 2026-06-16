@@ -6,6 +6,11 @@ from config import bot, ADMIN_IDS
 from datetime import datetime
 import threading
 import time
+import requests
+from PIL import Image, ImageDraw, ImageFont
+import io
+import tempfile
+import os
 
 # --- ГЛОБАЛЬНЫЕ СОСТОЯНИЯ ---
 # Словари для временного хранения данных в оперативной памяти бота.
@@ -744,8 +749,10 @@ def receive_love_draft(message):
     # Создаем меню подтверждения отправки
     markup = types.InlineKeyboardMarkup()
     btn_send = types.InlineKeyboardButton("Отправить 💌", callback_data="draft_send")
+    btn_send_cat = types.InlineKeyboardButton("Отправить с котёнком 🐱", callback_data="draft_send_cat")
     btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="draft_cancel")
-    markup.add(btn_cancel, btn_send) 
+    markup.add(btn_send, btn_send_cat)
+    markup.add(btn_cancel)
 
     # Используем reply_to, чтобы визуально привязать кнопки к черновику
     bot.reply_to(message, "Послание готово. Отправляем?", reply_markup=markup)
@@ -785,6 +792,76 @@ def process_draft(call):
         send_menu(user_id)
         draft_messages.pop(user_id, None)
 
+#Обработчик callback для послания с котёнком
+@bot.callback_query_handler(func=lambda call: call.data == "draft_send_cat")
+def process_draft_cat(call):
+    user_id = call.message.chat.id
+    message_id = draft_messages.get(user_id)
+    partner_id = db.get_partner(user_id)
+
+    if not message_id or not partner_id:
+        bot.edit_message_text("⚠️ Ошибка: черновик не найден или бот отключился.", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
+
+    # Получаем исходное сообщение (черновик)
+    try:
+        original_msg = bot.forward_message(user_id, user_id, message_id)
+        # Если это текст – извлекаем его
+        if original_msg.content_type == 'text':
+            text = original_msg.text
+        else:
+            # Если не текст – отправляем как есть без картинки, но с уведомлением
+            bot.send_message(user_id, "⚠️ Наложение текста на картинку поддерживается только для текстовых сообщений. Отправляю обычное послание.")
+            # Отправляем обычное копирование
+            sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
+            bot.send_message(partner_id, f"💌 Новое послание от {sender_text}:")
+            bot.copy_message(partner_id, user_id, message_id)
+            bot.edit_message_text("Отправлено! 💕", user_id, call.message.message_id)
+            draft_messages.pop(user_id, None)
+            send_menu(user_id)
+            return
+    except Exception as e:
+        bot.edit_message_text(f"⚠️ Ошибка при получении черновика: {e}", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
+
+    # Получаем картинку кота
+    cat_bytes = get_random_cat_image()
+    if cat_bytes is None:
+        bot.edit_message_text("⚠️ Не удалось загрузить картинку кота. Отправляю обычное послание.", user_id, call.message.message_id)
+        # Отправляем обычное
+        sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
+        bot.send_message(partner_id, f"💌 Новое послание от {sender_text}:")
+        bot.copy_message(partner_id, user_id, message_id)
+        bot.edit_message_text("Отправлено! 💕", user_id, call.message.message_id)
+        draft_messages.pop(user_id, None)
+        send_menu(user_id)
+        return
+
+    # Генерируем картинку с текстом
+    meme_bytes = generate_cat_meme(cat_bytes, text)
+    if meme_bytes is None:
+        bot.edit_message_text("⚠️ Ошибка при создании картинки. Отправляю обычное послание.", user_id, call.message.message_id)
+        # Отправляем обычное
+        sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
+        bot.send_message(partner_id, f"💌 Новое послание от {sender_text}:")
+        bot.copy_message(partner_id, user_id, message_id)
+        bot.edit_message_text("Отправлено! 💕", user_id, call.message.message_id)
+        draft_messages.pop(user_id, None)
+        send_menu(user_id)
+        return
+
+    # Отправляем картинку партнёру
+    sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
+    bot.send_message(partner_id, f"💌 Новое послание от {sender_text} (с котёнком 🐱):")
+    bot.send_photo(partner_id, photo=io.BytesIO(meme_bytes))
+
+    # Закрываем черновик у отправителя
+    bot.edit_message_text("Отправлено с котёнком! 🐱💕", user_id, call.message.message_id)
+    send_menu(user_id)
+    draft_messages.pop(user_id, None)
+
 # Серия сообщений подряд
 @bot.message_handler(commands=['streak'])
 def streak_command(message):
@@ -799,6 +876,102 @@ def streak_command(message):
         bot.send_message(message.chat.id, "💔 У вас пока нет серии. Отправляйте друг другу послания каждый день!")
     else:
         bot.send_message(message.chat.id, f"🔥 Ваша серия: {streak} дней подряд! Продолжайте в том же духе!")
+
+
+# ==========================================
+# ФУНКЦИИ ДЛЯ ГЕНЕРАЦИИ КОТО-ПОСЛАНИЙ
+# ==========================================
+
+def get_random_cat_image():
+    """Возвращает байты случайной картинки котенка из The Cat API."""
+    try:
+        response = requests.get("https://api.thecatapi.com/v1/images/search", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            img_url = data[0]['url']
+            img_response = requests.get(img_url, timeout=10)
+            if img_response.status_code == 200:
+                return img_response.content
+    except Exception as e:
+        print(f"Ошибка получения картинки кота: {e}")
+    # Если не удалось – возвращаем дефолтную картинку (или None)
+    return None
+
+
+def generate_cat_meme(image_bytes, text):
+    """
+    Накладывает текст на изображение.
+    Возвращает байты готового изображения (JPEG).
+    """
+    if image_bytes is None:
+        return None
+
+    # Открываем изображение из байтов
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    draw = ImageDraw.Draw(image)
+
+    # Подбираем шрифт (пытаемся найти системный, если нет – используем дефолтный)
+    try:
+        # Попробуем найти шрифт с поддержкой кириллицы
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "C:\\Windows\\Fonts\\Arial.ttf"
+        ]
+        font_path = None
+        for path in font_paths:
+            if os.path.exists(path):
+                font_path = path
+                break
+        if font_path:
+            font = ImageFont.truetype(font_path, 40)
+        else:
+            font = ImageFont.load_default()
+    except:
+        font = ImageFont.load_default()
+
+    # Разбиваем текст на строки (максимум 30 символов в строке)
+    max_chars = 30
+    lines = []
+    words = text.split()
+    current_line = ""
+    for word in words:
+        if len(current_line + " " + word) <= max_chars:
+            current_line += (" " + word) if current_line else word
+        else:
+            lines.append(current_line)
+            current_line = word
+    if current_line:
+        lines.append(current_line)
+
+    # Рассчитываем размер текста (приблизительно)
+    text_height = len(lines) * 50
+    img_width, img_height = image.size
+
+    # Позиция: центр по горизонтали, чуть ниже середины по вертикали
+    y_start = (img_height - text_height) // 2
+    y = y_start
+
+    # Рисуем каждую строку
+    for line in lines:
+        # Получаем ширину строки
+        try:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+        except:
+            text_width = len(line) * 20  # fallback
+        x = (img_width - text_width) // 2
+        # Добавляем тень для читаемости (дважды рисуем чёрный и белый)
+        draw.text((x - 2, y - 2), line, font=font, fill="black")
+        draw.text((x + 2, y + 2), line, font=font, fill="black")
+        draw.text((x, y), line, font=font, fill="white")
+        y += 50
+
+    # Сохраняем в байты
+    img_bytes = io.BytesIO()
+    image.save(img_bytes, format='JPEG', quality=90)
+    img_bytes.seek(0)
+    return img_bytes.getvalue()
 
 # ==========================================
 # ЧЕРНЫЙ СПИСОК (БЛОКИРОВКА)
