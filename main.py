@@ -5,7 +5,6 @@ import db
 from config import bot, ADMIN_IDS
 from datetime import datetime
 import threading
-import time
 import requests
 from PIL import Image, ImageDraw, ImageFont
 import io
