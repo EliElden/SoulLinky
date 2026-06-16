@@ -116,8 +116,9 @@ def help_command(message):
         "/gender — Изменить свой пол\n"
         "/id — Узнать свой числовой ID\n"
         "/connect — Подключиться к котейке\n"
-        "/disconnect — Отключиться от котейки 💔\n"
-        "/love — Отправить послание котейке 💌\n\n"
+        "/disconnect — Отключиться от котейки \n"
+        "/love — Отправить послание котейке \n"
+        "/streak — Показать текущую серию \n\n"
         "📅 *Важные даты:*\n"
         "/adddate — Добавить общую важную дату\n"
         "/mydates — Список всех важных дат\n"
@@ -777,10 +778,27 @@ def process_draft(call):
         # 2. Магия copy_message: полностью копирует исходное сообщение (стикер/фото/кружок) партнеру
         bot.copy_message(partner_id, user_id, message_id)
 
+        db.update_streak(user_id, partner_id) #обновить серию
+
         # 3. Закрываем черновик у отправителя
         bot.edit_message_text("Отправлено! 💕", user_id, call.message.message_id)
         send_menu(user_id)
         draft_messages.pop(user_id, None)
+
+# Серия сообщений подряд
+@bot.message_handler(commands=['streak'])
+def streak_command(message):
+    """Показывает текущую серию (количество дней подряд, когда оба отправляли послания)."""
+    partner_id = db.get_partner(message.chat.id)
+    if not partner_id:
+        bot.send_message(message.chat.id, "❌ У тебя нет пары, чтобы смотреть серию.")
+        return
+
+    streak = db.get_streak(message.chat.id, partner_id)
+    if streak == 0:
+        bot.send_message(message.chat.id, "💔 У вас пока нет серии. Отправляйте друг другу послания каждый день!")
+    else:
+        bot.send_message(message.chat.id, f"🔥 Ваша серия: {streak} дней подряд! Продолжайте в том же духе!")
 
 # ==========================================
 # ЧЕРНЫЙ СПИСОК (БЛОКИРОВКА)

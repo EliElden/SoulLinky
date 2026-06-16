@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 # ==========================================
 # НАСТРОЙКА ПОДКЛЮЧЕНИЯ К БАЗЕ ДАННЫХ
@@ -68,6 +69,18 @@ def init_db():
         )
     ''')
 
+    # Таблица для хранения серий сообщений подряд
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS streaks (
+            user1_id INTEGER,
+            user2_id INTEGER,
+            streak_count INTEGER DEFAULT 0,
+            last_streak_date TEXT,      -- дата, когда серия была обновлена (оба отправили в этот день)
+            last_send_user1 TEXT,       -- дата последней отправки от user1
+            last_send_user2 TEXT,       -- дата последней отправки от user2
+            PRIMARY KEY (user1_id, user2_id)
+        )
+    ''')
     conn.commit()
 
     cursor.execute("PRAGMA table_info(users)")
@@ -343,3 +356,82 @@ def delete_wish(wish_id, user_id):
 
     conn.commit()
     return cursor.rowcount > 0
+
+def update_streak(user_id, partner_id):
+    """
+    Обновляет серию (streak) для пары после отправки послания.
+    user_id – кто отправил, partner_id – получатель.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    # Упорядочиваем ID, чтобы уникально идентифицировать пару
+    if user_id < partner_id:
+        u1, u2 = user_id, partner_id
+    else:
+        u1, u2 = partner_id, user_id
+
+    # Получаем текущую запись о серии
+    cursor.execute('''
+        SELECT streak_count, last_streak_date, last_send_user1, last_send_user2
+        FROM streaks WHERE user1_id = ? AND user2_id = ?
+    ''', (u1, u2))
+    row = cursor.fetchone()
+
+    if row is None:
+        # Если записи нет – создаём новую с нулевыми значениями
+        streak_count = 0
+        last_streak_date = None
+        last_send_u1 = None
+        last_send_u2 = None
+    else:
+        streak_count, last_streak_date, last_send_u1, last_send_u2 = row
+
+    # Определяем, кто отправил, и обновляем его дату последней отправки
+    if user_id == u1:
+        last_send_u1 = today
+        other_last_send = last_send_u2
+    else:
+        last_send_u2 = today
+        other_last_send = last_send_u1
+
+    # Проверяем, отправил ли другой пользователь сегодня
+    both_sent_today = (last_send_u1 == today and last_send_u2 == today)
+
+    new_streak = streak_count
+    new_last_streak_date = last_streak_date
+
+    if both_sent_today:
+        # Если сегодня оба отправили – обновляем серию
+        if last_streak_date is None:
+            # Первая серия в истории
+            new_streak = 1
+            new_last_streak_date = today
+        else:
+            # Если серия уже обновлена сегодня – ничего не делаем
+            if last_streak_date != today:
+                # Проверяем, была ли серия вчера (продолжение)
+                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                if last_streak_date == yesterday:
+                    new_streak = streak_count + 1
+                else:
+                    # Начинаем новую серию (предыдущая прервана)
+                    new_streak = 1
+                new_last_streak_date = today
+
+    # Сохраняем обновлённую запись (INSERT OR REPLACE)
+    cursor.execute('''
+        INSERT OR REPLACE INTO streaks
+        (user1_id, user2_id, streak_count, last_streak_date, last_send_user1, last_send_user2)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (u1, u2, new_streak, new_last_streak_date, last_send_u1, last_send_u2))
+    conn.commit()
+
+
+def get_streak(user_id, partner_id):
+    """Возвращает текущее значение серии (количество дней подряд) для пары."""
+    if user_id < partner_id:
+        u1, u2 = user_id, partner_id
+    else:
+        u1, u2 = partner_id, user_id
+    cursor.execute('SELECT streak_count FROM streaks WHERE user1_id = ? AND user2_id = ?', (u1, u2))
+    row = cursor.fetchone()
+    return row[0] if row else 0
