@@ -965,24 +965,8 @@ def streak_command(message):
 
 def get_random_cat_image():
     """
-    Пытается получить случайную картинку котика из The Cat API.
-    При неудаче использует локальную папку cat_images.
-    Возвращает байты изображения или None, если ни API, ни локальные не сработали.
+    Использует только локальные изображения из папки cat_images.
     """
-    # 1. Пробуем API
-    try:
-        response = requests.get("https://api.thecatapi.com/v1/images/search", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            img_url = data[0]['url']
-            img_response = requests.get(img_url, timeout=10)
-            if img_response.status_code == 200:
-                return img_response.content
-    except Exception as e:
-        print(f"Ошибка получения картинки кота из API: {e}")
-
-    # 2. Если API не удался — используем локальный резерв
-    print("⚠️ Использую локальное изображение котика")
     return get_local_cat_image()
 
 
@@ -1410,6 +1394,14 @@ def deldate_interactive(user_id):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_deldate"))
     bot.send_message(user_id, "Введи ID важной даты, которую хочешь удалить:", reply_markup=markup)
+
+@bot.message_handler(commands=['delwish'])
+def delwish_command(message):
+    delwish_interactive(message.chat.id)
+
+@bot.message_handler(commands=['deldate'])
+def deldate_command(message):
+    deldate_interactive(message.chat.id)
 
 # Отмена удаления
 @bot.callback_query_handler(func=lambda call: call.data in ["cancel_delwish", "cancel_deldate"])
