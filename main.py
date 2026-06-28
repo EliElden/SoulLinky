@@ -136,8 +136,8 @@ def help_command(message):
         "/addwish — Добавить подарок, свидание или желание\n\n"
         "/delwish — Удалить элемент вишлиста\n\n"
         "🛡 *Безопасность:*\n"
-        "/block — Заблокировать пользователя\n"
-        "/unblock — Разблокировать пользователя\n"
+        "/block — Заблокировать котейку\n"
+        "/unblock — Разблокировать котейку\n"
         "/blacklist — Мой черный список"
     )
     
@@ -1055,7 +1055,7 @@ def block_command(message):
     
     bot.send_message(
         message.chat.id, 
-        "Введи ID или @username пользователя, которого хочешь заблокировать 🛑:",
+        "Введи ID или @username котейки, которую хочешь заблокировать 🛑:",
         reply_markup=markup
     )
 
@@ -1068,7 +1068,7 @@ def unblock_command(message):
     
     bot.send_message(
         message.chat.id, 
-        "Введи ID или @username пользователя для разблокировки 🔓:",
+        "Введи ID или @username котейки для разблокировки 🔓:",
         reply_markup=markup
     )
 
