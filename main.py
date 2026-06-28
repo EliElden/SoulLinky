@@ -33,6 +33,10 @@ waiting_for_date_partner = {}    # хранит partner_id для текущей
 waiting_for_wish_type = {}
 waiting_for_wish_title = {}
 waiting_for_wish_description = {}
+waiting_for_delwish_id = {}
+waiting_for_deldate_id = {}
+waiting_for_wish_confirm = {}   # данные для подтверждения добавления вишлиста
+waiting_for_date_confirm = {}   # данные для подтверждения добавления даты
 
 # ==========================================
 # ФУНКЦИИ-ПОМОЩНИКИ (ИНТЕРФЕЙС И ТЕКСТЫ)
@@ -45,15 +49,15 @@ def get_main_keyboard(user_id):
     btn_help = types.KeyboardButton("❓ Помощь")
     btn_start = types.KeyboardButton("🔄 Перезапуск")
 
-    # Если есть партнер — добавляем кнопку послания (или вишлиста)
     if db.get_partner(user_id):
         btn_love = types.KeyboardButton("💌 Послание")
         btn_wishlist = types.KeyboardButton("🎁 Вишлист")
+        btn_dates = types.KeyboardButton("📅 Даты")
+        btn_streak = types.KeyboardButton("🔥 Серия")
         markup.row(btn_love, btn_wishlist)
+        markup.row(btn_dates, btn_streak)
 
-    # Кнопки навигации будут у всех и всегда
     markup.row(btn_help, btn_start)
-    
     return markup
 
 def get_gender_keyboard():
@@ -129,7 +133,7 @@ def help_command(message):
         "/deldate — Удалить важную дату\n\n"
         "💕 *Вишлист пары:*\n"
         "/wishlist — Посмотреть общий вишлист\n"
-        "/addwish — Добавить подарок или идею свидания\n"
+        "/addwish — Добавить подарок, свидание или желание\n\n"
         "/delwish — Удалить элемент вишлиста\n\n"
         "🛡 *Безопасность:*\n"
         "/block — Заблокировать пользователя\n"
@@ -701,8 +705,34 @@ def love_button_handler(message):
     love(message)
 
 @bot.message_handler(func=lambda message: message.text == "🎁 Вишлист")
-def wishlist_button_handler(message):
-    wishlist(message)
+def wishlist_menu_handler(message):
+    show_wishlist_menu(message.chat.id)
+
+def show_wishlist_menu(chat_id):
+    markup = types.InlineKeyboardMarkup()
+    btn_view = types.InlineKeyboardButton("📋 Просмотреть", callback_data="wishlist_view")
+    btn_add = types.InlineKeyboardButton("➕ Добавить", callback_data="wishlist_add")
+    btn_del = types.InlineKeyboardButton("❌ Удалить", callback_data="wishlist_del")
+    markup.add(btn_view, btn_add)
+    markup.add(btn_del)
+    bot.send_message(chat_id, "💕 Меню вишлиста:", reply_markup=markup)
+
+def show_dates_menu(chat_id):
+    markup = types.InlineKeyboardMarkup()
+    btn_view = types.InlineKeyboardButton("📋 Просмотреть", callback_data="dates_view")
+    btn_add = types.InlineKeyboardButton("➕ Добавить", callback_data="dates_add")
+    btn_del = types.InlineKeyboardButton("❌ Удалить", callback_data="dates_del")
+    markup.add(btn_view, btn_add)
+    markup.add(btn_del)
+    bot.send_message(chat_id, "📅 Меню важных дат:", reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.text == "📅 Даты")
+def dates_menu_handler(message):
+    show_dates_menu(message.chat.id)
+
+@bot.message_handler(func=lambda message: message.text == "🔥 Серия")
+def streak_button_handler(message):
+    streak_command(message)
 
 @bot.callback_query_handler(func=lambda call: call.data == "cancel_love")
 def cancel_love_callback(call):
@@ -717,6 +747,29 @@ def cancel_love_callback(call):
     
     # Возвращаем главное меню
     send_menu(user_id, "Главное меню 👇")
+
+@bot.callback_query_handler(func=lambda call: call.data in ["wishlist_view", "wishlist_add", "wishlist_del", "dates_view", "dates_add", "dates_del"])
+def process_wishlist_dates_menu(call):
+    user_id = call.message.chat.id
+    if call.data == "wishlist_view":
+        wishlist(call.message)  # вызываем существующую функцию показа списка
+        bot.answer_callback_query(call.id)
+    elif call.data == "wishlist_add":
+        add_wish_start(call.message)
+        bot.answer_callback_query(call.id)
+    elif call.data == "wishlist_del":
+        # запускаем процесс удаления (интерактивно)
+        delwish_interactive(user_id)
+        bot.answer_callback_query(call.id)
+    elif call.data == "dates_view":
+        list_dates(call.message)
+        bot.answer_callback_query(call.id)
+    elif call.data == "dates_add":
+        add_date_start(call.message)
+        bot.answer_callback_query(call.id)
+    elif call.data == "dates_del":
+        deldate_interactive(user_id)
+        bot.answer_callback_query(call.id)
 
 # Обработчик любых типов сообщений для создания черновика
 @bot.message_handler(
@@ -1203,7 +1256,6 @@ def process_date_type(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("remind_"))
 def process_remind_days(call):
-    """Сохраняет дату с выбранным сроком напоминания"""
     user_id = call.message.chat.id
     remind_days = int(call.data.split("_")[1])
 
@@ -1219,20 +1271,55 @@ def process_remind_days(call):
         send_menu(user_id)
         return
 
-    # Очищаем состояния
+    # Сохраняем в состояние подтверждения
+    waiting_for_date_confirm[user_id] = {
+        'title': title,
+        'event_date': event_date,
+        'is_annual': is_annual,
+        'remind_days': remind_days,
+        'original_date_str': original_date_str,
+        'partner_id': partner_id
+    }
+
+    # Очищаем старые состояния
     waiting_for_date_remind.pop(user_id, None)
     waiting_for_date_partner.pop(user_id, None)
 
-    # Сохраняем в БД
-    db.add_important_date(user_id, partner_id, title, event_date, is_annual, remind_days)
-
-    date_display = original_date_str
-    if is_annual:
-        date_display = original_date_str[:5]  # покажем только день-месяц
-
+    # Показываем сводку
+    date_display = original_date_str if not is_annual else original_date_str[:5]
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_date_add"),
+        types.InlineKeyboardButton("❌ Отменить", callback_data="cancel_date_add")
+    )
     bot.edit_message_text(
-        f"✅ Дата «{title}» ({date_display}) добавлена!\n"
-        f"⏰ Напоминание придёт за {remind_days} дн.",
+        f"📅 Проверь данные:\n\nНазвание: {title}\nДата: {date_display}\n"
+        f"Тип: {'Ежегодная' if is_annual else 'Однократная'}\n"
+        f"Напоминание за {remind_days} дн.\n\nВсё верно?",
+        user_id, call.message.message_id, reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data in ["confirm_date_add", "cancel_date_add"])
+def confirm_date_add(call):
+    user_id = call.message.chat.id
+    if call.data == "cancel_date_add":
+        waiting_for_date_confirm.pop(user_id, None)
+        bot.edit_message_text("Добавление даты отменено.", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
+
+    data = waiting_for_date_confirm.get(user_id)
+    if not data:
+        bot.edit_message_text("❌ Данные потеряны. Начни заново.", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
+
+    db.add_important_date(user_id, data['partner_id'], data['title'], data['event_date'], data['is_annual'], data['remind_days'])
+    waiting_for_date_confirm.pop(user_id, None)
+
+    date_display = data['original_date_str'] if not data['is_annual'] else data['original_date_str'][:5]
+    bot.edit_message_text(
+        f"✅ Дата «{data['title']}» ({date_display}) добавлена!\n⏰ Напоминание за {data['remind_days']} дн.",
         user_id, call.message.message_id
     )
     send_menu(user_id)
@@ -1274,26 +1361,88 @@ def list_dates(message):
     text += "\nУдалить: `/deldate <id>`"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
-#deldate
-@bot.message_handler(commands=['deldate'])
-def delete_date(message):
-    """Удаляет важную дату по ID"""
-    args = message.text.split()
-    if len(args) != 2:
-        bot.send_message(message.chat.id, "❌ Использование: /deldate <id_даты>\nID можно посмотреть в /mydates")
-        return
+def delwish_interactive(user_id):
+    """Запускает процесс удаления вишлиста"""
+    waiting_for_delwish_id[user_id] = True
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_delwish"))
+    bot.send_message(user_id, "Введи ID элемента вишлиста, который хочешь удалить:", reply_markup=markup)
 
-    try:
-        date_id = int(args[1])
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ ID должен быть числом")
-        return
+def deldate_interactive(user_id):
+    """Запускает процесс удаления даты"""
+    waiting_for_deldate_id[user_id] = True
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_deldate"))
+    bot.send_message(user_id, "Введи ID важной даты, которую хочешь удалить:", reply_markup=markup)
 
-    if db.delete_date(date_id, message.chat.id):
-        bot.send_message(message.chat.id, f"✅ Дата с ID {date_id} удалена.")
+# Отмена удаления
+@bot.callback_query_handler(func=lambda call: call.data in ["cancel_delwish", "cancel_deldate"])
+def cancel_delete(call):
+    user_id = call.message.chat.id
+    if call.data == "cancel_delwish":
+        waiting_for_delwish_id.pop(user_id, None)
+        bot.edit_message_text("Удаление вишлиста отменено.", user_id, call.message.message_id)
     else:
-        bot.send_message(message.chat.id, f"❌ Дата с ID {date_id} не найдена или у вас нет прав на её удаление.")
+        waiting_for_deldate_id.pop(user_id, None)
+        bot.edit_message_text("Удаление даты отменено.", user_id, call.message.message_id)
+    send_menu(user_id)
 
+# Обработчик ввода ID для удаления
+@bot.message_handler(func=lambda m: m.chat.id in waiting_for_delwish_id or m.chat.id in waiting_for_deldate_id)
+def process_delete_id(message):
+    user_id = message.chat.id
+    is_wish = user_id in waiting_for_delwish_id
+    if message.content_type != 'text':
+        bot.send_message(user_id, "❌ Пожалуйста, отправь ID числом.")
+        return
+    try:
+        item_id = int(message.text.strip())
+    except ValueError:
+        bot.send_message(user_id, "❌ ID должен быть числом. Попробуй ещё раз.")
+        return
+
+    if is_wish:
+        # Проверяем, существует ли элемент и принадлежит ли паре
+        wish = db.get_wish_by_id(item_id)
+        if not wish:
+            bot.send_message(user_id, "❌ Элемент с таким ID не найден.")
+            return
+        # Проверяем, что пользователь имеет право удалять (он участник пары)
+        wish_id, wish_type, title, description, creator_id = wish
+        # Надо проверить, что user_id является user1_id или user2_id в этой записи
+        # Для этого нужно получить пару из БД – сделаем функцию в db.py
+        if not db.is_wish_owner(user_id, item_id):
+            bot.send_message(user_id, "❌ У тебя нет прав на удаление этого элемента.")
+            return
+        # Показываем подтверждение
+        confirm_markup = types.InlineKeyboardMarkup()
+        confirm_markup.add(
+            types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm_delwish_{item_id}"),
+            types.InlineKeyboardButton("❌ Отменить", callback_data="cancel_delwish")
+        )
+        emoji = "🎁" if wish_type == "gift" else ("🌆" if wish_type == "date" else "💭")
+        bot.send_message(user_id,
+            f"Ты хочешь удалить:\n{emoji} *{title}*\n📝 {description}\n\nПодтверждаешь?",
+            parse_mode="Markdown", reply_markup=confirm_markup)
+        waiting_for_delwish_id.pop(user_id, None)
+    else:
+        # Аналогично для дат
+        date = db.get_date_by_id(item_id)
+        if not date:
+            bot.send_message(user_id, "❌ Дата с таким ID не найдена.")
+            return
+        if not db.is_date_owner(user_id, item_id):
+            bot.send_message(user_id, "❌ У тебя нет прав на удаление этой даты.")
+            return
+        confirm_markup = types.InlineKeyboardMarkup()
+        confirm_markup.add(
+            types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm_deldate_{item_id}"),
+            types.InlineKeyboardButton("❌ Отменить", callback_data="cancel_deldate")
+        )
+        bot.send_message(user_id,
+            f"Ты хочешь удалить дату:\n📅 *{date[1]}* ({date[2]})\n\nПодтверждаешь?",
+            parse_mode="Markdown", reply_markup=confirm_markup)
+        waiting_for_deldate_id.pop(user_id, None)
 
 # ==========================================
 # ВИШЛИСТ ПАРЫ
@@ -1301,70 +1450,45 @@ def delete_date(message):
 
 @bot.message_handler(commands=['addwish'])
 def add_wish_start(message):
-
     partner_id = db.get_partner(message.chat.id)
-
     if not partner_id:
         send_no_partner_error(message.chat.id)
         return
 
     markup = types.InlineKeyboardMarkup()
-
-    btn_gift = types.InlineKeyboardButton(
-        "🎁 Подарок",
-        callback_data="wish_gift"
-    )
-
-    btn_date = types.InlineKeyboardButton(
-        "🌆 Свидание",
-        callback_data="wish_date"
-    )
-
-    btn_cancel = types.InlineKeyboardButton(
-        "Отменить ❌",
-        callback_data="wish_cancel"
-    )
-
-    markup.add(btn_gift, btn_date)
+    btn_gift = types.InlineKeyboardButton("🎁 Подарок", callback_data="wish_gift")
+    btn_date = types.InlineKeyboardButton("🌆 Свидание", callback_data="wish_date")
+    btn_wish = types.InlineKeyboardButton("💭 Желание", callback_data="wish_wish")   # новая кнопка
+    btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="wish_cancel")
+    markup.add(btn_gift, btn_date, btn_wish)   # можно в одну строку три кнопки
     markup.add(btn_cancel)
-
-    bot.send_message(
-        message.chat.id,
-        "Что хочешь добавить в вишлист?",
-        reply_markup=markup
-    )
-
+    bot.send_message(message.chat.id, "Что хочешь добавить в вишлист?", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("wish_"))
 def process_wish_type(call):
-
     user_id = call.message.chat.id
-
     if call.data == "wish_cancel":
-
+        # очистка состояний
         waiting_for_wish_type.pop(user_id, None)
         waiting_for_wish_title.pop(user_id, None)
         waiting_for_wish_description.pop(user_id, None)
-
-        bot.edit_message_text(
-            "Добавление отменено 🛑",
-            user_id,
-            call.message.message_id
-        )
-
+        bot.edit_message_text("Добавление отменено 🛑", user_id, call.message.message_id)
         send_menu(user_id)
         return
 
-    wish_type = "gift" if call.data == "wish_gift" else "date"
+    # Определяем тип
+    if call.data == "wish_gift":
+        wish_type = "gift"
+    elif call.data == "wish_date":
+        wish_type = "date"
+    elif call.data == "wish_wish":
+        wish_type = "wish"
+    else:
+        return
 
     waiting_for_wish_type[user_id] = wish_type
     waiting_for_wish_title[user_id] = True
-
-    bot.edit_message_text(
-        "✍️ Введи название:",
-        user_id,
-        call.message.message_id
-    )
+    bot.edit_message_text("✍️ Введи название:", user_id, call.message.message_id)
 
 
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_wish_title)
@@ -1390,7 +1514,6 @@ def get_wish_title(message):
 
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_wish_description)
 def get_wish_description(message):
-
     if message.text.startswith('/'):
         waiting_for_wish_description.pop(message.chat.id, None)
         waiting_for_wish_type.pop(message.chat.id, None)
@@ -1398,53 +1521,68 @@ def get_wish_description(message):
         return
 
     user_id = message.chat.id
-    partner_id = db.get_partner(user_id)
-
     title = waiting_for_wish_description[user_id]["title"]
-
     description = message.text
-
     wish_type = waiting_for_wish_type[user_id]
 
-    db.add_wish(
-        user_id,
-        partner_id,
-        user_id,
-        wish_type,
-        title,
-        description
-    )
+    # Сохраняем данные в состояние подтверждения
+    waiting_for_wish_confirm[user_id] = {
+        'type': wish_type,
+        'title': title,
+        'description': description
+    }
 
+    # Очищаем старые состояния
     waiting_for_wish_description.pop(user_id, None)
     waiting_for_wish_type.pop(user_id, None)
 
-    wish_emoji = "🎁" if wish_type == "gift" else "🌆"
-
-    bot.send_message(
-        user_id,
-        f"✅ Добавлено в вишлист!\n\n"
-        f"{wish_emoji} {title}\n"
-        f"📝 {description}"
+    # Показываем сводку
+    emoji = "🎁" if wish_type == "gift" else ("🌆" if wish_type == "date" else "💭")
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_wish_add"),
+        types.InlineKeyboardButton("❌ Отменить", callback_data="cancel_wish_add")
     )
+    bot.send_message(user_id,
+        f"📝 Проверь данные:\n\n{emoji} *{title}*\n📝 {description}\n\nВсё верно?",
+        parse_mode="Markdown", reply_markup=markup)
 
-    # уведомление партнёру
-    creator_text = get_text_by_gender(
-        user_id,
-        "Твой котик 🐈‍⬛",
-        "Твоя кошечка 🐈"
-    )
+@bot.callback_query_handler(func=lambda call: call.data in ["confirm_wish_add", "cancel_wish_add"])
+def confirm_wish_add(call):
+    user_id = call.message.chat.id
+    if call.data == "cancel_wish_add":
+        waiting_for_wish_confirm.pop(user_id, None)
+        bot.edit_message_text("Добавление вишлиста отменено.", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
 
+    data = waiting_for_wish_confirm.get(user_id)
+    if not data:
+        bot.edit_message_text("❌ Данные потеряны. Начни заново.", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
+
+    partner_id = db.get_partner(user_id)
+    if not partner_id:
+        bot.edit_message_text("❌ У тебя нет пары.", user_id, call.message.message_id)
+        send_menu(user_id)
+        return
+
+    wish_id = db.add_wish(user_id, partner_id, user_id, data['type'], data['title'], data['description'])
+    waiting_for_wish_confirm.pop(user_id, None)
+
+    emoji = "🎁" if data['type'] == "gift" else ("🌆" if data['type'] == "date" else "💭")
+    bot.edit_message_text(f"✅ Добавлено в вишлист!\n\n{emoji} {data['title']}\n📝 {data['description']}", user_id, call.message.message_id)
+
+    # Уведомление партнёру
+    creator_text = get_text_by_gender(user_id, "Твой котик 🐈‍⬛", "Твоя кошечка 🐈")
     try:
-        bot.send_message(
-            partner_id,
-            f"💕 {creator_text} добавил(а) новую идею в вишлист!\n\n"
-            f"{wish_emoji} {title}\n"
-            f"📝 {description}"
-        )
+        bot.send_message(partner_id, f"💕 {creator_text} добавил(а) новую идею в вишлист!\n\n{emoji} {data['title']}\n📝 {data['description']}")
     except:
         pass
-
     send_menu(user_id)
+
+
 
 
 @bot.message_handler(commands=['wishlist'])
@@ -1463,12 +1601,17 @@ def wishlist(message):
 
     for wish_id, wish_type, title, description, creator_id, username in wishes:
 
-        emoji = "🎁" if wish_type == "gift" else "🌆"
+        if wish_type == "gift":
+            emoji = "🎁"
+        elif wish_type == "date":
+            emoji = "🌆"
+        else:  # wish
+            emoji = "💭"
 
         creator = f"@{username}" if username else creator_id
 
         text += (
-            f"`{wish_id}` {emoji} *{title}*\n"
+            f"`id:{wish_id}` {emoji} *{title}*\n"
             f"📝 {description}\n"
             f"👤 Добавил(а): {creator}\n\n"
         )
@@ -1482,37 +1625,6 @@ def wishlist(message):
     )
 
 
-@bot.message_handler(commands=['delwish'])
-def delete_wish(message):
-
-    args = message.text.split()
-
-    if len(args) != 2:
-        bot.send_message(
-            message.chat.id,
-            "❌ Использование: /delwish <id>"
-        )
-        return
-
-    try:
-        wish_id = int(args[1])
-    except:
-        bot.send_message(
-            message.chat.id,
-            "❌ ID должен быть числом"
-        )
-        return
-
-    if db.delete_wish(wish_id, message.chat.id):
-        bot.send_message(
-            message.chat.id,
-            "✅ Элемент вишлиста удалён"
-        )
-    else:
-        bot.send_message(
-            message.chat.id,
-            "❌ Элемент не найден"
-        )
 
 # ==========================================
 # ЛОВУШКА ДЛЯ СЛУЧАЙНЫХ СООБЩЕНИЙ (ЕСЛИ ОЧИСТИЛИ ИСТОРИЮ)

@@ -19,7 +19,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             gender TEXT,
-            partner_id INTEGER
+            partner_id INTEGER,
+            language TEXT DEFAULT 'ru' 
         )
     ''')
 
@@ -81,6 +82,9 @@ def init_db():
             PRIMARY KEY (user1_id, user2_id)
         )
     ''')
+
+
+
     conn.commit()
 
     cursor.execute("PRAGMA table_info(users)")
@@ -435,3 +439,19 @@ def get_streak(user_id, partner_id):
     cursor.execute('SELECT streak_count FROM streaks WHERE user1_id = ? AND user2_id = ?', (u1, u2))
     row = cursor.fetchone()
     return row[0] if row else 0
+
+def get_wish_by_id(wish_id):
+    cursor.execute('SELECT id, wish_type, title, description, creator_id FROM wishlist WHERE id = ?', (wish_id,))
+    return cursor.fetchone()
+
+def get_date_by_id(date_id):
+    cursor.execute('SELECT id, title, event_date, is_annual, remind_days_before FROM important_dates WHERE id = ?', (date_id,))
+    return cursor.fetchone()
+
+def is_wish_owner(user_id, wish_id):
+    cursor.execute('SELECT 1 FROM wishlist WHERE id = ? AND (user1_id = ? OR user2_id = ?)', (wish_id, user_id, user_id))
+    return cursor.fetchone() is not None
+
+def is_date_owner(user_id, date_id):
+    cursor.execute('SELECT 1 FROM important_dates WHERE id = ? AND (user1_id = ? OR user2_id = ?)', (date_id, user_id, user_id))
+    return cursor.fetchone() is not None
