@@ -10,6 +10,8 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import tempfile
 import os
+import random
+
 
 # --- ГЛОБАЛЬНЫЕ СОСТОЯНИЯ ---
 # Словари для временного хранения данных в оперативной памяти бота.
@@ -914,6 +916,33 @@ def process_draft_cat(call):
     send_menu(user_id)
     draft_messages.pop(user_id, None)
 
+#Альтернатива - получаем локальное изображение котика
+def get_local_cat_image():
+    """
+    Возвращает байты случайного локального изображения котика.
+    Если папка пуста или файлы недоступны, возвращает None.
+    """
+    folder = os.path.join(os.path.dirname(__file__), 'cat_images')
+    if not os.path.exists(folder):
+        return None
+
+    # Получаем список файлов изображений (можно расширить список расширений)
+    valid_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp')
+    files = [f for f in os.listdir(folder) if f.lower().endswith(valid_extensions)]
+
+    if not files:
+        return None
+
+    chosen = random.choice(files)
+    file_path = os.path.join(folder, chosen)
+
+    try:
+        with open(file_path, 'rb') as f:
+            return f.read()
+    except Exception as e:
+        print(f"Ошибка чтения локального изображения: {e}")
+        return None
+
 # Серия сообщений подряд
 @bot.message_handler(commands=['streak'])
 def streak_command(message):
@@ -935,7 +964,12 @@ def streak_command(message):
 # ==========================================
 
 def get_random_cat_image():
-    """Возвращает байты случайной картинки котенка из The Cat API."""
+    """
+    Пытается получить случайную картинку котика из The Cat API.
+    При неудаче использует локальную папку cat_images.
+    Возвращает байты изображения или None, если ни API, ни локальные не сработали.
+    """
+    # 1. Пробуем API
     try:
         response = requests.get("https://api.thecatapi.com/v1/images/search", timeout=5)
         if response.status_code == 200:
@@ -945,9 +979,11 @@ def get_random_cat_image():
             if img_response.status_code == 200:
                 return img_response.content
     except Exception as e:
-        print(f"Ошибка получения картинки кота: {e}")
-    # Если не удалось – возвращаем дефолтную картинку (или None)
-    return None
+        print(f"Ошибка получения картинки кота из API: {e}")
+
+    # 2. Если API не удался — используем локальный резерв
+    print("⚠️ Использую локальное изображение котика")
+    return get_local_cat_image()
 
 
 def generate_cat_meme(image_bytes, text):
