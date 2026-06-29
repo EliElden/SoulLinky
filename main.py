@@ -123,6 +123,8 @@ def help_command(message):
     markup = get_main_keyboard(message.chat.id)
 
     help_text = (
+        "🌟 *О боте:*\n"
+        "Это бот для влюблённых, который помогает поддерживать связь, планировать совместные события и сохранять романтику в отношениях 💕\n\n"
         "Доступные команды:\n\n"
         "/start — Перезапустить бота\n"
         "/help — Показать это меню\n"
@@ -131,17 +133,15 @@ def help_command(message):
         "/connect — Подключиться к котейке\n"
         "/disconnect — Отключиться от котейки \n"
         "/love — Отправить послание котейке \n"
-        "/streak — Показать текущую серию \n"
-        "/timeout — Отправить подумать над поведением 🛑\n\n"
+        "/streak — Показать текущую серию \n\n"
         "📅 *Важные даты:*\n"
         "/adddate — Добавить общую важную дату\n"
         "/mydates — Список всех важных дат\n"
         "/deldate — Удалить важную дату\n\n"
         "💕 *Вишлист пары:*\n"
         "/wishlist — Посмотреть общий вишлист\n"
-        "/addwish — Добавить подарок, свидание или желание\n"
-        "/delwish — Удалить элемент вишлиста\n"
-        "/mood — Отметить, как ты себя чувствуешь\n\n"
+        "/addwish — Добавить подарок, свидание или желание\n\n"
+        "/delwish — Удалить элемент вишлиста\n\n"
         "🛡 *Безопасность:*\n"
         "/block — Заблокировать котейку\n"
         "/unblock — Разблокировать котейку\n"
@@ -177,10 +177,10 @@ def start(message):
         if db.get_partner(message.chat.id):
             # Сценарий 1: Зарегистрирован и в паре
             status_text = get_text_by_gender(message.chat.id, "подключен", "подключена")
-            target_text = get_target_partner_text(message.chat.id) 
-            
+            target_text = get_target_partner_text(message.chat.id)
+
             bot.send_message(
-                message.chat.id, 
+                message.chat.id,
                 f"С возвращением! Ты уже {status_text} к {target_text} 💕\n"
                 "Используй меню внизу или /help для списка команд.",
                 reply_markup=get_main_keyboard(message.chat.id)
@@ -198,8 +198,14 @@ def start(message):
 
     # Сценарий 3: Новый пользователь (нужна регистрация)
     bot.send_message(
-        message.chat.id, 
-        f"Привет, {message.from_user.first_name}! Я бот для парочек 💕\n"
+        message.chat.id,
+        f"Привет, {message.from_user.first_name}! Я бот для парочек 💕\n\n"
+        "Я помогу вам:\n"
+        "• Отправлять друг другу любовные послания 💌\n"
+        "• Вести общий вишлист (подарки, свидания, желания) 🎁\n"
+        "• Отмечать важные даты и получать напоминания 📅\n"
+        "• Следить за серией ежедневных сообщений 🔥\n"
+        "• И многое другое!\n\n"
         "Для начала, скажи кто ты:",
         reply_markup=get_gender_keyboard()
     )
