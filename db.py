@@ -273,15 +273,14 @@ def add_important_date(user_id, partner_id, title, event_date, is_annual, remind
 
 def get_dates_for_user(user_id):
     """
-    Возвращает все важные даты, где участвует пользователь,
-    включая информацию о создателе (user1_id).
+    Возвращает все важные даты, где участвует пользователь.
+    Возвращает список кортежей: (id, title, event_date, is_annual, remind_days_before)
     """
     cursor.execute('''
-        SELECT d.id, d.title, d.event_date, d.is_annual, d.remind_days_before, d.user1_id, u.username
-        FROM important_dates d
-        LEFT JOIN users u ON d.user1_id = u.user_id
-        WHERE d.user1_id = ? OR d.user2_id = ?
-        ORDER BY d.event_date DESC
+        SELECT id, title, event_date, is_annual, remind_days_before 
+        FROM important_dates 
+        WHERE user1_id = ? OR user2_id = ?
+        ORDER BY event_date DESC
     ''', (user_id, user_id))
     return cursor.fetchall()
 
@@ -500,3 +499,18 @@ def get_mood_stats(user_id):
     ''', (user_id,))
     # Превращаем результат [(mood, count), ...] в удобный словарь
     return dict(cursor.fetchall())
+
+def get_mood_history(user1_id, user2_id, limit=15):
+    """
+    Возвращает историю настроений для пары (последние записи).
+    Включает дату, время, ID, само настроение и никнейм.
+    """
+    cursor.execute('''
+        SELECT m.user_id, m.mood, m.created_at, u.username
+        FROM moods m
+        LEFT JOIN users u ON m.user_id = u.user_id
+        WHERE m.user_id IN (?, ?)
+        ORDER BY m.created_at DESC
+        LIMIT ?
+    ''', (user1_id, user2_id, limit))
+    return cursor.fetchall()
