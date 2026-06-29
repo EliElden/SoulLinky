@@ -12,6 +12,7 @@ import tempfile
 import os
 import random
 import time
+import sys
 
 
 # --- ГЛОБАЛЬНЫЕ СОСТОЯНИЯ ---
@@ -804,7 +805,7 @@ def receive_love_draft(message):
     # Создаем меню подтверждения отправки
     markup = types.InlineKeyboardMarkup()
     btn_send = types.InlineKeyboardButton("Отправить 💌", callback_data="draft_send")
-    btn_send_cat = types.InlineKeyboardButton("Отправить с котёнком 🐱", callback_data="draft_send_cat")
+    btn_send_cat = types.InlineKeyboardButton("С котёнком 🐱", callback_data="draft_send_cat")
     btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="draft_cancel")
     markup.add(btn_send, btn_send_cat)
     markup.add(btn_cancel)
@@ -813,7 +814,7 @@ def receive_love_draft(message):
     bot.reply_to(message, "Послание готово. Отправляем?", reply_markup=markup)
 
 # Обработка кнопок подтверждения отправки черновика
-@bot.callback_query_handler(func=lambda call: call.data.startswith("draft_"))
+@bot.callback_query_handler(func=lambda call: call.data in ["draft_send", "draft_cancel"])
 def process_draft(call):
     user_id = call.message.chat.id
     
@@ -850,7 +851,6 @@ def process_draft(call):
 #Обработчик callback для послания с котёнком
 @bot.callback_query_handler(func=lambda call: call.data == "draft_send_cat")
 def process_draft_cat(call):
-    start_total = time.time()
     user_id = call.message.chat.id
     message_id = draft_messages.get(user_id)
     partner_id = db.get_partner(user_id)
@@ -860,13 +860,16 @@ def process_draft_cat(call):
         send_menu(user_id)
         return
 
-    # 1. Получение текста из черновика
+    # 1. Получение текста (пересылаем себе, затем удаляем копию)
     try:
-        original_msg = bot.forward_message(user_id, user_id, message_id)
-        if original_msg.content_type == 'text':
-            text = original_msg.text.strip()
+        forwarded = bot.forward_message(user_id, user_id, message_id)
+        # Сразу удаляем пересланное, чтобы скрыть от отправителя
+        bot.delete_message(user_id, forwarded.message_id)
+
+        if forwarded.content_type == 'text':
+            text = forwarded.text.strip()
         else:
-            # Если сообщение не текст – отправляем как есть (без картинки)
+            # Не текст – отправляем как обычное послание
             bot.send_message(user_id, "⚠️ Наложение текста на картинку поддерживается только для текстовых сообщений. Отправляю обычное послание.")
             sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
             bot.send_message(partner_id, f"💌 Новое послание от {sender_text}:")
@@ -880,11 +883,10 @@ def process_draft_cat(call):
         send_menu(user_id)
         return
 
-    # Если текст пустой – используем стандартную фразу
     if not text:
         text = "🐱 Мур-мур!"
 
-    # 2. Получение локальной картинки кота
+    # 2. Загрузка локального изображения
     cat_bytes = get_local_cat_image()
     if cat_bytes is None:
         bot.edit_message_text("⚠️ Не удалось загрузить картинку кота. Отправляю обычное послание.", user_id, call.message.message_id)
@@ -896,7 +898,7 @@ def process_draft_cat(call):
         send_menu(user_id)
         return
 
-    # 3. Генерация мема с оптимизациями
+    # 3. Генерация мема с улучшенной обводкой
     meme_bytes = generate_cat_meme_optimized(cat_bytes, text)
     if meme_bytes is None:
         bot.edit_message_text("⚠️ Ошибка при создании картинки. Отправляю обычное послание.", user_id, call.message.message_id)
@@ -913,13 +915,10 @@ def process_draft_cat(call):
     bot.send_message(partner_id, f"💌 Новое послание от {sender_text} (с котёнком 🐱):")
     bot.send_photo(partner_id, photo=io.BytesIO(meme_bytes))
 
-    # 5. Завершаем черновик
-    bot.edit_message_text("Отправлено с котёнком! 🐱💕", user_id, call.message.message_id)
-    send_menu(user_id)
+    # 5. Завершение: обновляем клавиатуру без лишнего текста
+    bot.edit_message_text("✅ Отправлено с котёнком!", user_id, call.message.message_id)
+    bot.send_message(user_id, " ", reply_markup=get_main_keyboard(user_id))  # невидимый пробел
     draft_messages.pop(user_id, None)
-
-    # Логирование (опционально, для отладки)
-    print(f"⏱ Общее время обработки draft_send_cat: {time.time() - start_total:.2f} сек")
 
 #Альтернатива - получаем локальное изображение котика
 def get_local_cat_image():
@@ -976,27 +975,33 @@ def get_random_cat_image():
 
 
 def generate_cat_meme_optimized(image_bytes, text, max_size=(1200, 1200), quality=75):
-    """
-    Накладывает текст на изображение с предварительным уменьшением размера.
-    Возвращает байты готового JPEG.
-    """
     if image_bytes is None:
         return None
 
     try:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        # Уменьшаем изображение, если оно больше max_size
-        image.thumbnail(max_size, Image.Resampling.LANCZOS)
+        image.thumbnail(max_size, Image.LANCZOS)
 
         draw = ImageDraw.Draw(image)
 
-        # Загружаем шрифт (используем стандартный, если нет кириллического)
-        try:
-            font = ImageFont.truetype("arial.ttf", 36)  # можно указать путь к шрифту
-        except:
+        # Поиск шрифта
+        font = None
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "C:\\Windows\\Fonts\\Arial.ttf"
+        ]
+        for path in font_paths:
+            if os.path.exists(path):
+                try:
+                    font = ImageFont.truetype(path, 36)
+                    break
+                except:
+                    continue
+        if font is None:
             font = ImageFont.load_default()
 
-        # Разбиваем текст на строки (максимум 30 символов)
+        # Разбиваем на строки
         max_chars = 30
         words = text.split()
         lines = []
@@ -1010,32 +1015,41 @@ def generate_cat_meme_optimized(image_bytes, text, max_size=(1200, 1200), qualit
         if current_line:
             lines.append(current_line)
 
-        # Рисуем каждую строку по центру
         img_width, img_height = image.size
         line_height = 50
         total_text_height = len(lines) * line_height
         y = (img_height - total_text_height) // 2
 
         for line in lines:
+            # Определяем ширину текста
             try:
-                bbox = draw.textbbox((0, 0), line, font=font)
-                text_width = bbox[2] - bbox[0]
+                if hasattr(draw, 'textbbox'):
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    text_width = bbox[2] - bbox[0]
+                else:
+                    text_width, _ = draw.textsize(line, font=font)
             except:
                 text_width = len(line) * 20
             x = (img_width - text_width) // 2
-            # Тень для читаемости
-            draw.text((x - 2, y - 2), line, font=font, fill="black")
-            draw.text((x + 2, y + 2), line, font=font, fill="black")
-            draw.text((x, y), line, font=font, fill="white")
+
+            # Рисуем текст с обводкой
+            draw.text(
+                (x, y),
+                line,
+                font=font,
+                fill="white",
+                stroke_width=2,
+                stroke_fill="black"
+            )
             y += line_height
 
-        # Сохраняем с пониженным качеством для скорости
         img_bytes = io.BytesIO()
         image.save(img_bytes, format='JPEG', quality=quality)
         img_bytes.seek(0)
         return img_bytes.getvalue()
 
     except Exception as e:
+        # Можно закомментировать, если не нужен вывод ошибок
         print(f"Ошибка в generate_cat_meme_optimized: {e}")
         return None
 
