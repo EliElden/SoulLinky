@@ -1527,7 +1527,7 @@ def list_dates(message):
         text += f"  `Напом. за {remind_days} дн.\n"
 
     text += "\nДля удаления используй /deldate (без ID)"
-    bot.send_message(message.chat.id, text, parse_mode="Markdown)
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 
 # ==========================================
