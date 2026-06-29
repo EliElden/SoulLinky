@@ -3,8 +3,8 @@ from datetime import datetime, timedelta
 
 class BaseDatabase:
     """
-    @brief Базовый класс для работы с SQLite.
-    @details Инкапсулирует подключение и основные операции управления транзакциями.
+    @brief Базовый класс для работы с базой данных SQLite.
+    @details Инкапсулирует логику подключения и управления транзакциями.
     """
 
     def __init__(self, db_path: str = 'database.db'):
@@ -12,7 +12,6 @@ class BaseDatabase:
         @brief Конструктор базового класса БД.
         @param db_path Путь к файлу базы данных SQLite.
         """
-        # check_same_thread=False необходим для многопоточных приложений (telebot)
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
 
@@ -32,12 +31,12 @@ class BaseDatabase:
 class BotDatabase(BaseDatabase):
     """
     @brief Класс для работы со специфичными таблицами Telegram-бота.
-    @details Наследуется от BaseDatabase, реализуя паттерн Repository для сущностей бота.
+    @details Наследуется от BaseDatabase, реализуя все необходимые запросы (Repository).
     """
 
     def init_db(self):
         """
-        @brief Инициализирует таблицы базы данных при запуске.
+        @brief Инициализирует структуру базы данных при запуске бота.
         """
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -53,6 +52,15 @@ class BotDatabase(BaseDatabase):
                 blocker_id INTEGER,
                 blocked_id INTEGER,
                 PRIMARY KEY (blocker_id, blocked_id)
+            )
+        ''')
+
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS moods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                mood TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
 
@@ -110,14 +118,19 @@ class BotDatabase(BaseDatabase):
         if 'username' not in existing_columns:
             self.cursor.execute('ALTER TABLE users ADD COLUMN username TEXT')
             print("🔧 База данных обновлена: добавлена колонка 'username'")
-            self.commit()
+            
+        if 'timeout_until' not in existing_columns:
+            self.cursor.execute('ALTER TABLE users ADD COLUMN timeout_until TEXT')
+            print("🔧 База данных обновлена: добавлена колонка 'timeout_until'")
+            
+        self.commit()
 
     def add_or_update_user(self, user_id: int, gender: str, username: str):
         """
-        @brief Добавляет нового пользователя или обновляет данные существующего (upsert).
-        @param user_id ID пользователя в Telegram.
+        @brief Добавляет нового пользователя или обновляет существующего (upsert).
+        @param user_id ID пользователя.
         @param gender Пол пользователя ('male' или 'female').
-        @param username Никнейм пользователя в Telegram.
+        @param username Telegram-никнейм.
         """
         clean_username = username.replace('@', '') if username else None
         
@@ -132,9 +145,9 @@ class BotDatabase(BaseDatabase):
 
     def get_id_by_username(self, username: str):
         """
-        @brief Ищет числовой ID пользователя по его Telegram-никнейму.
+        @brief Ищет ID пользователя по его Telegram-никнейму.
         @param username Никнейм пользователя.
-        @return Integer ID пользователя или None, если не найден.
+        @return ID пользователя или None.
         """
         clean_username = username.replace('@', '')
         self.cursor.execute('SELECT user_id FROM users WHERE username = ?', (clean_username,))
@@ -155,7 +168,7 @@ class BotDatabase(BaseDatabase):
         """
         @brief Получает пол пользователя.
         @param user_id ID пользователя.
-        @return Строка с полом или None.
+        @return Строка с полом ('male'/'female') или None.
         """
         self.cursor.execute('SELECT gender FROM users WHERE user_id = ?', (user_id,))
         result = self.cursor.fetchone()
@@ -163,7 +176,7 @@ class BotDatabase(BaseDatabase):
 
     def get_partner(self, user_id: int):
         """
-        @brief Узнает ID партнера для указанного пользователя.
+        @brief Получает ID партнера для указанного пользователя.
         @param user_id ID пользователя.
         @return ID партнера или None.
         """
@@ -175,7 +188,7 @@ class BotDatabase(BaseDatabase):
         """
         @brief Разрывает связь между партнерами.
         @param user_id ID инициатора разрыва.
-        @return ID бывшего партнера для уведомления, либо None.
+        @return ID бывшего партнера или None.
         """
         partner_id = self.get_partner(user_id)
         if partner_id:
@@ -187,7 +200,7 @@ class BotDatabase(BaseDatabase):
 
     def get_all_users(self):
         """
-        @brief Возвращает список всех ID пользователей из базы данных для рассылки.
+        @brief Возвращает список всех ID пользователей из БД.
         @return Список целых чисел (ID пользователей).
         """
         self.cursor.execute('SELECT user_id FROM users')
@@ -211,13 +224,13 @@ class BotDatabase(BaseDatabase):
         
         return total_users, total_pairs
 
-    # --- ФУНКЦИИ ДЛЯ ЧЕРНОГО СПИСКА ---
+    # ==========================================
+    # ФУНКЦИИ ДЛЯ ЧЕРНОГО СПИСКА
+    # ==========================================
 
     def block_user(self, blocker_id: int, blocked_id: int):
         """
         @brief Добавляет пользователя в черный список.
-        @param blocker_id ID инициатора блокировки.
-        @param blocked_id ID блокируемого.
         """
         self.cursor.execute('INSERT OR IGNORE INTO blocked_users (blocker_id, blocked_id) VALUES (?, ?)', (blocker_id, blocked_id))
         self.commit()
@@ -225,8 +238,6 @@ class BotDatabase(BaseDatabase):
     def unblock_user(self, blocker_id: int, blocked_id: int):
         """
         @brief Удаляет пользователя из черного списка.
-        @param blocker_id ID инициатора.
-        @param blocked_id ID разблокируемого.
         """
         self.cursor.execute('DELETE FROM blocked_users WHERE blocker_id = ? AND blocked_id = ?', (blocker_id, blocked_id))
         self.commit()
@@ -234,9 +245,7 @@ class BotDatabase(BaseDatabase):
     def is_blocked(self, blocker_id: int, blocked_id: int):
         """
         @brief Проверяет факт блокировки.
-        @param blocker_id Потенциальный инициатор блокировки.
-        @param blocked_id Потенциально заблокированный.
-        @return True, если blocked_id находится в ЧС у blocker_id.
+        @return True, если blocked_id заблокирован blocker_id.
         """
         self.cursor.execute('SELECT 1 FROM blocked_users WHERE blocker_id = ? AND blocked_id = ?', (blocker_id, blocked_id))
         return self.cursor.fetchone() is not None
@@ -244,7 +253,6 @@ class BotDatabase(BaseDatabase):
     def get_blocked_users(self, blocker_id: int):
         """
         @brief Возвращает список заблокированных пользователей.
-        @param blocker_id ID инициатора.
         @return Список кортежей (ID, username).
         """
         self.cursor.execute('''
@@ -258,8 +266,7 @@ class BotDatabase(BaseDatabase):
     def get_username(self, user_id: int):
         """
         @brief Получает никнейм по ID.
-        @param user_id ID пользователя.
-        @return Никнейм без @ или None.
+        @return Никнейм (без @) или None.
         """
         self.cursor.execute('SELECT username FROM users WHERE user_id = ?', (user_id,))
         result = self.cursor.fetchone()
@@ -282,21 +289,22 @@ class BotDatabase(BaseDatabase):
 
     def get_dates_for_user(self, user_id: int):
         """
-        @brief Возвращает все важные даты, где участвует пользователь.
+        @brief Возвращает все важные даты пользователя, включая создателя.
         @return Список кортежей с данными дат.
         """
         self.cursor.execute('''
-            SELECT id, title, event_date, is_annual, remind_days_before 
-            FROM important_dates 
-            WHERE user1_id = ? OR user2_id = ?
-            ORDER BY event_date DESC
+            SELECT d.id, d.title, d.event_date, d.is_annual, d.remind_days_before, d.user1_id, u.username
+            FROM important_dates d
+            LEFT JOIN users u ON d.user1_id = u.user_id
+            WHERE d.user1_id = ? OR d.user2_id = ?
+            ORDER BY d.event_date DESC
         ''', (user_id, user_id))
         return self.cursor.fetchall()
 
     def delete_date(self, date_id: int, user_id: int):
         """
         @brief Удаляет важную дату (с проверкой прав).
-        @return True если успешно удалено, иначе False.
+        @return True если удалено, иначе False.
         """
         self.cursor.execute('''
             DELETE FROM important_dates 
@@ -308,8 +316,6 @@ class BotDatabase(BaseDatabase):
     def get_dates_to_remind(self, today_date: str):
         """
         @brief Ищет даты, о которых нужно напомнить сегодня.
-        @param today_date Текущая дата в формате YYYY-MM-DD.
-        @return Список дат для рассылки напоминаний.
         """
         self.cursor.execute('''
             SELECT d.id, d.user1_id, d.user2_id, d.title, d.event_date,
@@ -336,13 +342,13 @@ class BotDatabase(BaseDatabase):
 
     def mark_reminder_sent(self, date_id: int, year: int):
         """
-        @brief Фиксирует факт успешной отправки напоминания.
+        @brief Фиксирует факт отправки напоминания.
         """
         self.cursor.execute('INSERT OR IGNORE INTO reminders_sent VALUES (?, ?)', (date_id, year))
         self.commit()
 
     # ==========================================
-    # ФУНКЦИИ ДЛЯ ОБЩЕГО ВИШЛИСТА
+    # ФУНКЦИИ ДЛЯ ОБЩЕГО ВИШЛИСТА И СЕРИЙ
     # ==========================================
 
     def add_wish(self, user1_id: int, user2_id: int, creator_id: int, wish_type: str, title: str, description: str):
@@ -386,12 +392,8 @@ class BotDatabase(BaseDatabase):
     def update_streak(self, user_id: int, partner_id: int):
         """
         @brief Обновляет счетчик подряд идущих дней общения (streak).
-        @param user_id ID отправителя.
-        @param partner_id ID получателя.
         """
         today = datetime.now().strftime("%Y-%m-%d")
-        
-        # Сортировка для уникальной идентификации пары
         u1, u2 = (user_id, partner_id) if user_id < partner_id else (partner_id, user_id)
 
         self.cursor.execute('''
@@ -470,7 +472,95 @@ class BotDatabase(BaseDatabase):
         self.cursor.execute('SELECT 1 FROM important_dates WHERE id = ? AND (user1_id = ? OR user2_id = ?)', (date_id, user_id, user_id))
         return self.cursor.fetchone() is not None
 
+    # ==========================================
+    # ФУНКЦИИ ДЛЯ МУД-ТРЕКЕРА
+    # ==========================================
+
+    def set_mood(self, user_id: int, mood: str):
+        """
+        @brief Добавляет новую запись о настроении пользователя.
+        """
+        self.cursor.execute('''
+            INSERT INTO moods (user_id, mood)
+            VALUES (?, ?)
+        ''', (user_id, mood))
+        self.commit()
+
+    def get_latest_mood(self, user_id: int):
+        """
+        @brief Возвращает последнее установленное настроение пользователя.
+        """
+        self.cursor.execute('''
+            SELECT mood, created_at 
+            FROM moods 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        ''', (user_id,))
+        return self.cursor.fetchone()
+
+    def get_mood_stats(self, user_id: int):
+        """
+        @brief Возвращает статистику настроений пользователя.
+        @return Словарь {настроение: количество}.
+        """
+        self.cursor.execute('''
+            SELECT mood, COUNT(*) 
+            FROM moods 
+            WHERE user_id = ? 
+            GROUP BY mood
+        ''', (user_id,))
+        return dict(self.cursor.fetchall())
+
+    def get_mood_history(self, user1_id: int, user2_id: int, limit: int = 15):
+        """
+        @brief Возвращает историю настроений для пары.
+        """
+        self.cursor.execute('''
+            SELECT m.user_id, m.mood, m.created_at, u.username
+            FROM moods m
+            LEFT JOIN users u ON m.user_id = u.user_id
+            WHERE m.user_id IN (?, ?)
+            ORDER BY m.created_at DESC
+            LIMIT ?
+        ''', (user1_id, user2_id, limit))
+        return self.cursor.fetchall()
+
+    # ==========================================
+    # ФУНКЦИИ ДЛЯ «УГЛА» (ТАЙМАУТА)
+    # ==========================================
+
+    def set_timeout(self, user_id: int, minutes: int):
+        """
+        @brief Отправляет пользователя в угол на заданное время.
+        """
+        timeout_time = (datetime.now() + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+        self.cursor.execute('UPDATE users SET timeout_until = ? WHERE user_id = ?', (timeout_time, user_id))
+        self.commit()
+
+    def get_timeout(self, user_id: int):
+        """
+        @brief Проверяет, находится ли пользователь в таймауте.
+        @return Объект datetime или None.
+        """
+        self.cursor.execute('SELECT timeout_until FROM users WHERE user_id = ?', (user_id,))
+        result = self.cursor.fetchone()
+        
+        if result and result[0]:
+            timeout_time = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
+            if datetime.now() < timeout_time:
+                return timeout_time
+            else:
+                self.clear_timeout(user_id)
+                
+        return None
+
+    def clear_timeout(self, user_id: int):
+        """
+        @brief Досрочно снимает таймаут с пользователя.
+        """
+        self.cursor.execute('UPDATE users SET timeout_until = NULL WHERE user_id = ?', (user_id,))
+        self.commit()
+
 # Инициализируем глобальный объект для обратной совместимости с main.py
-# В идеале (по DRY и ООП) экземпляр должен передаваться в функции, но 
-# мы оставим его доступным на уровне модуля, чтобы main.py легко к нему обращался.
 bot_db = BotDatabase()
