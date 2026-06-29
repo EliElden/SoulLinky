@@ -1,18 +1,13 @@
-from config import bot
 from telebot import types
 import time
 import db 
 from config import bot, ADMIN_IDS
 from datetime import datetime
 import threading
-import requests
 from PIL import Image, ImageDraw, ImageFont
 import io
-import tempfile
 import os
 import random
-import time
-import sys
 
 
 # --- ГЛОБАЛЬНЫЕ СОСТОЯНИЯ ---
