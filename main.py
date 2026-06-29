@@ -9,6 +9,7 @@ import tempfile
 import os
 import random
 import time
+import requests
 import sys
 
 
@@ -905,7 +906,7 @@ def process_draft_cat(call):
         text = "🐱 Мур-мур!"
 
     # 2. Загрузка локального изображения
-    cat_bytes = get_local_cat_image()
+    cat_bytes = get_random_cat_image()
     if cat_bytes is None:
         bot.edit_message_text("⚠️ Не удалось загрузить картинку кота. Отправляю обычное послание.", user_id, call.message.message_id)
         sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
@@ -935,7 +936,7 @@ def process_draft_cat(call):
 
     # 5. Завершение: обновляем клавиатуру без лишнего текста
     bot.edit_message_text("✅ Отправлено с котёнком!", user_id, call.message.message_id)
-    bot.send_message(user_id, " ", reply_markup=get_main_keyboard(user_id))  # невидимый пробел
+    bot.send_message(user_id, "\u200B", reply_markup=get_main_keyboard(user_id))  # невидимый пробел
     draft_messages.pop(user_id, None)
 
 #Альтернатива - получаем локальное изображение котика
@@ -987,8 +988,26 @@ def streak_command(message):
 
 def get_random_cat_image():
     """
-    Использует только локальные изображения из папки cat_images.
+    Пытается получить случайную картинку кота из The Cat API.
+    При недоступности API или ошибке использует локальный резерв из папки cat_images.
+    Возвращает байты изображения или None.
     """
+    # 1. Пробуем API с короткими таймаутами
+    try:
+        response = requests.get(
+            "https://api.thecatapi.com/v1/images/search",
+            params={"tags": "couple,together,funny,silly"},  # <-- теги сюда
+            timeout=3
+        if response.status_code == 200:
+            data = response.json()
+            img_url = data[0]['url']
+            img_response = requests.get(img_url, timeout=5)
+            if img_response.status_code == 200:
+                return img_response.content
+    except Exception as e:
+        print(f"Ошибка получения картинки из API: {e}")  # лог для отладки (можно убрать)
+
+    # 2. Если API не сработал – используем локальный резерв
     return get_local_cat_image()
 
 
