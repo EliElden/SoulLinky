@@ -1,3 +1,5 @@
 pyTelegramBotAPI
 python-dotenv
 PySocks
+pillow
+requests
