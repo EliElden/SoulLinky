@@ -896,7 +896,6 @@ def process_draft_cat(call):
         state.draft_messages.pop(user_id, None)
         send_menu(user_id)
         return
-выкл
     sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
     bot.send_message(partner_id, f"💌 Новое послание от {sender_text} (с котёнком 🐱):")
     bot.send_photo(partner_id, photo=io.BytesIO(meme_bytes))
