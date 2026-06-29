@@ -171,6 +171,8 @@ def help_command(message):
     markup = ui_manager.get_main_keyboard(message.chat.id)
 
     help_text = (
+        "🌟 *О боте:*\n"
+        "Это бот для влюблённых, который помогает поддерживать связь, планировать совместные события и сохранять романтику в отношениях 💕\n\n"
         "Доступные команды:\n\n"
         "/start — Перезапустить бота\n"
         "/help — Показать это меню\n"
@@ -245,8 +247,15 @@ def start(message):
         return
 
     bot.send_message(
-        message.chat.id, 
-        f"Привет, {message.from_user.first_name}! Я бот для парочек 💕\n"
+        message.chat.id,
+        f"Привет, {message.from_user.first_name}! Я бот для парочек 💕\n\n"
+        "Я помогу вам:\n"
+        "• Отправлять друг другу любовные послания 💌\n"
+        "• Вести общий вишлист (подарки, свидания, желания) 🎁\n"
+        "• Отмечать важные даты и получать напоминания 📅\n"
+        "• Следить за серией ежедневных сообщений 🔥\n"
+        "• Отмечать настроение и видеть статистику 🎭\n"
+        "• И многое другое!\n\n"
         "Для начала, скажи кто ты:",
         reply_markup=ui_manager.get_gender_keyboard()
     )
@@ -922,9 +931,21 @@ def get_local_cat_image():
 
 
 def get_random_cat_image():
-    """
-    @brief Обертка для получения локального изображения.
-    """
+    try:
+        response = requests.get(
+            "https://api.thecatapi.com/v1/images/search",
+            params={"tags": "couple,together"},
+            timeout=3
+        )
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                img_url = data[0]['url']
+                img_response = requests.get(img_url, timeout=5)
+                if img_response.status_code == 200:
+                    return img_response.content
+    except Exception as e:
+        print(f"Ошибка API: {e}")
     return get_local_cat_image()
 
 
@@ -1469,10 +1490,22 @@ def list_dates(message):
             days_left = (date_obj - today).days
             date_str = event_date
 
+        if is_annual:
+            # рассчитываем следующую дату в текущем году
+            next_date = date_obj.replace(year=today.year)
+            if next_date < today:
+                next_date = next_date.replace(year=today.year + 1)
+            days_left = (next_date - today).days
+            date_str = f"каждый год {event_date[5:]}"
+        else:
+            days_left = (date_obj - today).days
+            date_str = event_date
+
         if days_left >= 0:
             status = f" (через {days_left} дн.)"
         else:
-            status = " (прошла)"
+            days_ago = abs(days_left)
+            status = f" (прошло {days_ago} дн. назад)"
 
         creator = f"@{username}" if username else creator_id
 
@@ -1480,7 +1513,7 @@ def list_dates(message):
         text += f"  `id:{date_id}` | напом. за {remind_days} дн.\n"
         text += f"  👤 Добавил(а): {creator}\n\n"
 
-    text += "Удалить: /deldate <id>"
+    text += "\nДля удаления используй /deldate"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 # ==========================================
@@ -1804,7 +1837,7 @@ def wishlist(message):
             f"👤 Добавил(а): {creator}\n\n"
         )
 
-    text += "Удалить: /delwish <id>"
+    text += "Удаление: /delwish"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 # ==========================================
