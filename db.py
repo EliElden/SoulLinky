@@ -273,14 +273,15 @@ def add_important_date(user_id, partner_id, title, event_date, is_annual, remind
 
 def get_dates_for_user(user_id):
     """
-    Возвращает все важные даты, где участвует пользователь.
-    Возвращает список кортежей: (id, title, event_date, is_annual, remind_days_before)
+    Возвращает все важные даты, где участвует пользователь,
+    включая информацию о создателе (user1_id).
     """
     cursor.execute('''
-        SELECT id, title, event_date, is_annual, remind_days_before 
-        FROM important_dates 
-        WHERE user1_id = ? OR user2_id = ?
-        ORDER BY event_date DESC
+        SELECT d.id, d.title, d.event_date, d.is_annual, d.remind_days_before, d.user1_id, u.username
+        FROM important_dates d
+        LEFT JOIN users u ON d.user1_id = u.user_id
+        WHERE d.user1_id = ? OR d.user2_id = ?
+        ORDER BY d.event_date DESC
     ''', (user_id, user_id))
     return cursor.fetchall()
 
