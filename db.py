@@ -103,7 +103,13 @@ def init_db():
     if 'username' not in existing_columns:
         cursor.execute('ALTER TABLE users ADD COLUMN username TEXT')
         print("🔧 База данных обновлена: добавлена колонка 'username'")
-        conn.commit()
+        
+    # Колонка для угла (таймаута)
+    if 'timeout_until' not in existing_columns:
+        cursor.execute('ALTER TABLE users ADD COLUMN timeout_until TEXT')
+        print("🔧 База данных обновлена: добавлена колонка 'timeout_until'")
+        
+    conn.commit()
 
 
 def add_or_update_user(user_id, gender, username):
@@ -514,3 +520,36 @@ def get_mood_history(user1_id, user2_id, limit=15):
         LIMIT ?
     ''', (user1_id, user2_id, limit))
     return cursor.fetchall()
+
+# ==========================================
+# ФУНКЦИИ ДЛЯ «УГЛА» (ТАЙМАУТА)
+# ==========================================
+
+def set_timeout(user_id, minutes):
+    """Отправляет пользователя в угол на X минут"""
+    timeout_time = (datetime.now() + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('UPDATE users SET timeout_until = ? WHERE user_id = ?', (timeout_time, user_id))
+    conn.commit()
+
+def get_timeout(user_id):
+    """
+    Проверяет, сидит ли пользователь в углу.
+    Если время вышло — выпускает. Если нет — возвращает объект datetime.
+    """
+    cursor.execute('SELECT timeout_until FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    
+    if result and result[0]:
+        timeout_time = datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
+        if datetime.now() < timeout_time:
+            return timeout_time
+        else:
+            # Время наказания истекло, очищаем
+            clear_timeout(user_id)
+            
+    return None
+
+def clear_timeout(user_id):
+    """Амнистия: досрочно выпускает из угла"""
+    cursor.execute('UPDATE users SET timeout_until = NULL WHERE user_id = ?', (user_id,))
+    conn.commit()

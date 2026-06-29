@@ -5,7 +5,6 @@ import db
 from config import bot, ADMIN_IDS
 from datetime import datetime
 import threading
-import requests
 from PIL import Image, ImageDraw, ImageFont
 import io
 import tempfile
@@ -44,7 +43,6 @@ waiting_for_date_confirm = {}   # данные для подтверждения
 # ==========================================
 # ФУНКЦИИ-ПОМОЩНИКИ (ИНТЕРФЕЙС И ТЕКСТЫ)
 # ==========================================
-
 def get_main_keyboard(user_id):
     """Создает умную клавиатуру: одиноким — 2 кнопки, влюбленным — 3 (и более)"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -57,11 +55,13 @@ def get_main_keyboard(user_id):
         btn_wishlist = types.KeyboardButton("🎁 Вишлист")
         btn_dates = types.KeyboardButton("📅 Даты")
         btn_streak = types.KeyboardButton("🔥 Серия")
-        btn_mood = types.KeyboardButton("🎭 Настроение") 
+        btn_mood = types.KeyboardButton("🎭 Настроение")
+        btn_timeout = types.KeyboardButton("🛑 В угол") 
         
         # Компонуем по рядам для красоты
         markup.row(btn_love, btn_wishlist)
-        markup.row(btn_dates, btn_streak, btn_mood)
+        markup.row(btn_dates, btn_streak)
+        markup.row(btn_mood, btn_timeout) 
 
     markup.row(btn_help, btn_start)
     return markup
@@ -132,15 +132,16 @@ def help_command(message):
         "/connect — Подключиться к котейке\n"
         "/disconnect — Отключиться от котейки \n"
         "/love — Отправить послание котейке \n"
-        "/streak — Показать текущую серию \n\n"
+        "/streak — Показать текущую серию \n"
+        "/timeout — Отправить подумать над поведением 🛑\n\n"
         "📅 *Важные даты:*\n"
         "/adddate — Добавить общую важную дату\n"
         "/mydates — Список всех важных дат\n"
         "/deldate — Удалить важную дату\n\n"
         "💕 *Вишлист пары:*\n"
         "/wishlist — Посмотреть общий вишлист\n"
-        "/addwish — Добавить подарок, свидание или желание\n\n"
-        "/delwish — Удалить элемент вишлиста\n\n"
+        "/addwish — Добавить подарок, свидание или желание\n"
+        "/delwish — Удалить элемент вишлиста\n"
         "/mood — Отметить, как ты себя чувствуешь\n\n"
         "🛡 *Безопасность:*\n"
         "/block — Заблокировать котейку\n"
@@ -690,6 +691,15 @@ def admin_stats(message):
 def love(message):
     """Инициализация процесса отправки любовного послания"""
     if db.get_partner(message.chat.id):
+        
+        # --- ПРОВЕРКА НА УГОЛ ---
+        timeout = db.get_timeout(message.chat.id)
+        if timeout:
+            time_left = int((timeout - datetime.now()).total_seconds() / 60) + 1
+            bot.send_message(message.chat.id, f"🛑 Тихо! Тебя отправили в угол думать над своим поведением.\nОсталось сидеть: {time_left} мин. 🤫")
+            return
+        # ------------------------------
+
         # Включаем состояние ожидания сообщения
         waiting_for_message[message.chat.id] = True
         
@@ -1042,6 +1052,106 @@ def generate_cat_meme_optimized(image_bytes, text, max_size=(1200, 1200), qualit
     except Exception as e:
         print(f"Ошибка в generate_cat_meme_optimized: {e}")
         return None
+
+# ==========================================
+# ШУТОЧНЫЙ ТАЙМАУТ (В УГОЛ!)
+# ==========================================
+
+@bot.message_handler(commands=['timeout'])
+def timeout_command(message):
+    user_id = message.chat.id
+    partner_id = db.get_partner(user_id)
+    
+    if not partner_id:
+        bot.send_message(user_id, "❌ У тебя нет пары. Кого наказывать-то?")
+        return
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("На 5 минут ⏱", callback_data="timeout_5"),
+        types.InlineKeyboardButton("На 15 минут ⏳", callback_data="timeout_15")
+    )
+    markup.add(
+        types.InlineKeyboardButton("На 1 час 🕰", callback_data="timeout_60"),
+        types.InlineKeyboardButton("Простить (снять) 😇", callback_data="timeout_0")
+    )
+    markup.add(types.InlineKeyboardButton("Любезно передумать ❌", callback_data="timeout_cancel"))
+
+    bot.send_message(user_id, "В угол! На сколько отправим подумать над своим поведением? 🛑", reply_markup=markup)
+
+# --- ОБРАБОТЧИК ДЛЯ КНОПКИ ---
+@bot.message_handler(func=lambda message: message.text == "🛑 В угол")
+def timeout_button_handler(message):
+    timeout_command(message)
+# --------------------------------------------
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("timeout_"))
+def process_timeout(call):
+    user_id = call.message.chat.id
+    action = call.data.split("_")[1]
+
+    if action == "cancel":
+        bot.edit_message_text("Отмена. Никто не наказан 😇", user_id, call.message.message_id)
+        return
+
+    partner_id = db.get_partner(user_id)
+    if not partner_id:
+        bot.edit_message_text("❌ Ошибка: котейка потерян(а).", user_id, call.message.message_id)
+        return
+
+    minutes = int(action)
+    initiator_text = get_text_by_gender(user_id, "Твой котик отправил", "Твоя кошечка отправила")
+
+    if minutes == 0:
+        db.clear_timeout(partner_id)
+        bot.edit_message_text("Ты милосердно прощаешь котейку 😇", user_id, call.message.message_id)
+        try:
+            pardon_text = get_text_by_gender(user_id, "Твой котик сменил", "Твоя кошечка сменила")
+            bot.send_message(partner_id, f"✨ {pardon_text} гнев на милость. Ты можешь выйти из угла и снова писать послания!")
+        except:
+            pass
+    else:
+        db.set_timeout(partner_id, minutes)
+        bot.edit_message_text(f"🛑 Котейка отправлен(а) в угол на {minutes} минут!", user_id, call.message.message_id)
+        try:
+            bot.send_message(
+                partner_id, 
+                f"🛑 *ВНИМАНИЕ!*\n{initiator_text} тебя подумать над своим поведением в угол на {minutes} минут!\nОтправка посланий временно заблокирована. 🤫", 
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+            
+        # --- ПОЛНАЯ ПЕРСОНАЛИЗАЦИЯ ТАЙМЕРА ---
+        def notify_timeout_end():
+            try:
+                db.cursor.execute('SELECT timeout_until FROM users WHERE user_id = ?', (partner_id,))
+                res = db.cursor.fetchone()
+                
+                if res and res[0]:
+                    timeout_time = datetime.strptime(res[0], "%Y-%m-%d %H:%M:%S")
+                    if datetime.now() >= timeout_time:
+                        db.clear_timeout(partner_id)
+                        
+                        # Пол того, кто сидел в углу (partner_id)
+                        thought_word = get_text_by_gender(partner_id, "подумал", "подумала")
+                        
+                        # Пол того, кто наказывал (user_id)
+                        target_text = get_text_by_gender(user_id, "своего котика", "свою кошечку")
+                        waiter_text = get_text_by_gender(user_id, "твой котик ждет", "твоя кошечка ждет")
+                        
+                        unban_msg = (
+                            "⏰ *Дзинь-дзинь!*\n\n"
+                            "Твоё время в углу подошло к концу! 🎉\n"
+                            f"Надеюсь, ты хорошо {thought_word} над своим поведением и больше не будешь расстраивать {target_text}. 😼\n\n"
+                            f"А теперь бегом извиняться, мириться и обниматься, {waiter_text}! 🥺💕"
+                        )
+                        bot.send_message(partner_id, unban_msg, parse_mode="Markdown")
+            except Exception as e:
+                print(f"Ошибка в таймере угла: {e}")
+
+        # Запускаем фоновый таймер (переводим минуты в секунды)
+        threading.Timer(minutes * 60, notify_timeout_end).start()
 
 # ==========================================
 # ЧЕРНЫЙ СПИСОК (БЛОКИРОВКА)
