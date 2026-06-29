@@ -33,6 +33,16 @@ def init_db():
         )
     ''')
 
+    # Таблица для трекера настроения
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS moods (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            mood TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     # Важные даты
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS important_dates (
@@ -455,3 +465,37 @@ def is_wish_owner(user_id, wish_id):
 def is_date_owner(user_id, date_id):
     cursor.execute('SELECT 1 FROM important_dates WHERE id = ? AND (user1_id = ? OR user2_id = ?)', (date_id, user_id, user_id))
     return cursor.fetchone() is not None
+
+# ==========================================
+# ФУНКЦИИ ДЛЯ МУД-ТРЕКЕРА
+# ==========================================
+
+def set_mood(user_id, mood):
+    """Добавляет новую запись о настроении пользователя"""
+    cursor.execute('''
+        INSERT INTO moods (user_id, mood)
+        VALUES (?, ?)
+    ''', (user_id, mood))
+    conn.commit()
+
+def get_latest_mood(user_id):
+    """Возвращает последнее установленное настроение пользователя и дату"""
+    cursor.execute('''
+        SELECT mood, created_at 
+        FROM moods 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC 
+        LIMIT 1
+    ''', (user_id,))
+    return cursor.fetchone()
+
+def get_mood_stats(user_id):
+    """Возвращает статистику: сколько раз было выбрано каждое настроение"""
+    cursor.execute('''
+        SELECT mood, COUNT(*) 
+        FROM moods 
+        WHERE user_id = ? 
+        GROUP BY mood
+    ''', (user_id,))
+    # Превращаем результат [(mood, count), ...] в удобный словарь
+    return dict(cursor.fetchall())

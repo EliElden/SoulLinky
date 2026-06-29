@@ -46,7 +46,7 @@ waiting_for_date_confirm = {}   # данные для подтверждения
 # ==========================================
 
 def get_main_keyboard(user_id):
-    """Создает умную клавиатуру: одиноким — 2 кнопки, влюбленным — 3"""
+    """Создает умную клавиатуру: одиноким — 2 кнопки, влюбленным — 3 (и более)"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     
     btn_help = types.KeyboardButton("❓ Помощь")
@@ -57,8 +57,11 @@ def get_main_keyboard(user_id):
         btn_wishlist = types.KeyboardButton("🎁 Вишлист")
         btn_dates = types.KeyboardButton("📅 Даты")
         btn_streak = types.KeyboardButton("🔥 Серия")
+        btn_mood = types.KeyboardButton("🎭 Настроение") 
+        
+        # Компонуем по рядам для красоты
         markup.row(btn_love, btn_wishlist)
-        markup.row(btn_dates, btn_streak)
+        markup.row(btn_dates, btn_streak, btn_mood)
 
     markup.row(btn_help, btn_start)
     return markup
@@ -138,6 +141,7 @@ def help_command(message):
         "/wishlist — Посмотреть общий вишлист\n"
         "/addwish — Добавить подарок, свидание или желание\n\n"
         "/delwish — Удалить элемент вишлиста\n\n"
+        "/mood — Отметить, как ты себя чувствуешь\n\n"
         "🛡 *Безопасность:*\n"
         "/block — Заблокировать котейку\n"
         "/unblock — Разблокировать котейку\n"
@@ -1646,7 +1650,134 @@ def wishlist(message):
         parse_mode="Markdown"
     )
 
+# ==========================================
+# МУД-ТРЕКЕР (НАСТРОЕНИЕ)
+# ==========================================
 
+@bot.message_handler(commands=['mood'])
+def mood_command(message):
+    show_mood_menu(message.chat.id)
+
+@bot.message_handler(func=lambda message: message.text == "🎭 Настроение")
+def mood_button_handler(message):
+    show_mood_menu(message.chat.id)
+
+def show_mood_menu(chat_id):
+    if not db.get_partner(chat_id):
+        send_no_partner_error(chat_id)
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_happy = types.InlineKeyboardButton("Счастлив(а) 😊", callback_data="mood_happy")
+    btn_love = types.InlineKeyboardButton("Люблю 🥰", callback_data="mood_love")
+    btn_sad = types.InlineKeyboardButton("Грущу 😢", callback_data="mood_sad")
+    btn_angry = types.InlineKeyboardButton("Злюсь 😠", callback_data="mood_angry")
+    btn_tired = types.InlineKeyboardButton("Устал(а) 😴", callback_data="mood_tired")
+    
+    # НОВАЯ КНОПКА СТАТИСТИКИ
+    btn_stats = types.InlineKeyboardButton("📊 Статистика за всё время", callback_data="mood_stats")
+    btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="mood_cancel")
+    
+    markup.add(btn_happy, btn_love, btn_sad, btn_angry, btn_tired)
+    markup.add(btn_stats) 
+    markup.add(btn_cancel)
+    
+    # Показываем текущее настроение, если оно есть
+    latest_mood = db.get_latest_mood(chat_id)
+    current_status = ""
+    if latest_mood:
+        mood_emoji = {
+            "happy": "😊", "love": "🥰", "sad": "😢", 
+            "angry": "😠", "tired": "😴"
+        }.get(latest_mood[0], "")
+        current_status = f"\nТвое текущее настроение: {mood_emoji}\n"
+
+    bot.send_message(
+        chat_id, 
+        f"Как ты себя чувствуешь сейчас? 🎭{current_status}", 
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mood_"))
+def process_mood_selection(call):
+    user_id = call.message.chat.id
+    
+    if call.data == "mood_cancel":
+        bot.edit_message_text("Выбор настроения отменен.", user_id, call.message.message_id)
+        return
+
+    # --- ОБРАБОТКА СТАТИСТИКИ ---
+    if call.data == "mood_stats":
+        partner_id = db.get_partner(user_id)
+        if not partner_id:
+            bot.edit_message_text("❌ У тебя нет пары для просмотра статистики.", user_id, call.message.message_id)
+            return
+        
+        # Получаем словари со статистикой
+        my_stats = db.get_mood_stats(user_id)
+        partner_stats = db.get_mood_stats(partner_id)
+        
+        # Перевод технических ключей в красивые названия
+        mood_names = {
+            "happy": "Счастье 😊",
+            "love": "Любовь 🥰",
+            "sad": "Грусть 😢",
+            "angry": "Злость 😠",
+            "tired": "Усталость 😴"
+        }
+        
+        # Помощник для красивого вывода списка
+        def format_stats(stats_dict):
+            if not stats_dict:
+                return "Пока нет записей 📭"
+            lines = []
+            # Сортируем от самых частых эмоций к самым редким
+            sorted_stats = sorted(stats_dict.items(), key=lambda item: item[1], reverse=True)
+            for mood, count in sorted_stats:
+                name = mood_names.get(mood, mood)
+                lines.append(f"• {name}: `{count}` раз(а)")
+            return "\n".join(lines)
+        
+        partner_name = get_user_display_name(partner_id)
+        
+        text = (
+            "📊 *Статистика настроений за всё время*\n\n"
+            f"👤 *Твои эмоции:*\n{format_stats(my_stats)}\n\n"
+            f"🐱 *Эмоции {partner_name}:*\n{format_stats(partner_stats)}"
+        )
+        
+        bot.edit_message_text(text, user_id, call.message.message_id, parse_mode="Markdown")
+        return
+    # ----------------------------------------
+
+    # Извлекаем само настроение из callback_data (например, 'mood_happy' -> 'happy')
+    selected_mood = call.data.split('_')[1]
+    
+    # Сохраняем в базу
+    db.set_mood(user_id, selected_mood)
+    
+    # Уведомляем пользователя
+    bot.edit_message_text("Твое настроение обновлено! ✨", user_id, call.message.message_id)
+    
+    # Формируем уведомление партнеру
+    partner_id = db.get_partner(user_id)
+    if partner_id:
+        initiator = get_text_by_gender(user_id, "Твой котик 🐈‍⬛", "Твоя кошечка 🐈")
+        
+        mood_messages = {
+            "happy": get_text_by_gender(user_id, "счастлив 😊", "счастлива 😊"),
+            "love": "посылает тебе свою любовь 🥰",
+            "sad": "грустит 😢. Самое время для поддержки!",
+            "angry": "злится 😠. Осторожно!",
+            "tired": get_text_by_gender(user_id, "устал 😴", "устала 😴")
+        }
+        
+        status_text = mood_messages.get(selected_mood, "изменил(а) настроение.")
+        
+        try:
+            bot.send_message(partner_id, f"🎭 *Обновление статуса:*\n{initiator} сейчас {status_text}", parse_mode="Markdown")
+        except:
+            pass
 
 # ==========================================
 # ЛОВУШКА ДЛЯ СЛУЧАЙНЫХ СООБЩЕНИЙ (ЕСЛИ ОЧИСТИЛИ ИСТОРИЮ)
