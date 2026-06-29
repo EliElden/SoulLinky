@@ -1470,6 +1470,36 @@ def process_delete_id(message):
             parse_mode="Markdown", reply_markup=confirm_markup)
         waiting_for_deldate_id.pop(user_id, None)
 
+# Обработчик кнопок "Подтвердить" для удаления из вишлиста и дат
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_delwish_") or call.data.startswith("confirm_deldate_"))
+def confirm_delete_action(call):
+    user_id = call.message.chat.id
+    
+    # Сценарий: Удаление из вишлиста
+    if call.data.startswith("confirm_delwish_"):
+        # Извлекаем ID из строки "confirm_delwish_15"
+        item_id = int(call.data.split("_")[2]) 
+        success = db.delete_wish(item_id, user_id)
+        
+        if success:
+            bot.edit_message_text("✅ Элемент успешно удален из вишлиста.", user_id, call.message.message_id)
+        else:
+            bot.edit_message_text("❌ Ошибка при удалении или элемент уже удален.", user_id, call.message.message_id)
+            
+    # Сценарий: Удаление важной даты
+    elif call.data.startswith("confirm_deldate_"):
+        # Извлекаем ID из строки "confirm_deldate_5"
+        item_id = int(call.data.split("_")[2]) 
+        success = db.delete_date(item_id, user_id)
+        
+        if success:
+            bot.edit_message_text("✅ Важная дата успешно удалена.", user_id, call.message.message_id)
+        else:
+            bot.edit_message_text("❌ Ошибка при удалении или дата уже удалена.", user_id, call.message.message_id)
+            
+    # Возвращаем меню
+    send_menu(user_id)
+
 # ==========================================
 # ВИШЛИСТ ПАРЫ
 # ==========================================
@@ -1649,6 +1679,8 @@ def wishlist(message):
         text,
         parse_mode="Markdown"
     )
+
+
 
 # ==========================================
 # МУД-ТРЕКЕР (НАСТРОЕНИЕ)
