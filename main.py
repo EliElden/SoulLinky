@@ -997,7 +997,7 @@ def get_random_cat_image():
         response = requests.get(
             "https://api.thecatapi.com/v1/images/search",
             params={"tags": "couple,together,funny,silly"},  # <-- теги сюда
-            timeout=3
+            timeout=3)
         if response.status_code == 200:
             data = response.json()
             img_url = data[0]['url']
