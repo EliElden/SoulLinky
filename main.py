@@ -1344,7 +1344,7 @@ def get_date_value(message):
                    types.InlineKeyboardButton("Ежегодная 🔁", callback_data="date_type_annual"))
         markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_date_value"), 
                    types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
-        bot.send_message(message.chat.id, "🔄 Это повторяющаяся дата (каждый год) или однократная?", 
+        bot.send_message(message.chat.id, "🔄 Это повторяющаяся дата (каждый год) или однократная (напоминание только раз в точную дату)?",
                          reply_markup=markup)
     except ValueError:
         bot.send_message(message.chat.id, "❌ Неверный формат! Введи дату как ДД.ММ.ГГГГ")
@@ -1470,7 +1470,7 @@ def confirm_date_add(call):
 #mydates
 @bot.message_handler(commands=['mydates'])
 def list_dates(message):
-    """Показывает все важные даты пользователя"""
+    """Показывает все важные даты пользователя с точным количеством дней"""
     dates = db.get_dates_for_user(message.chat.id)
     if not dates:
         bot.send_message(message.chat.id, "📭 У вас пока нет общих важных дат. Добавь через /adddate")
@@ -1478,34 +1478,49 @@ def list_dates(message):
 
     today = datetime.now().date()
     text = "📅 *Ваши общие важные даты:*\n\n"
-    
-    # Теперь распаковываем 7 переменных, включая создателя и его ник
-    for date_id, title, event_date, is_annual, remind_days, creator_id, username in dates:
+
+    for date_id, title, event_date, is_annual, remind_days in dates:
         date_obj = datetime.strptime(event_date, "%Y-%m-%d").date()
 
         if is_annual:
-            next_date = date_obj.replace(year=today.year)
-            if next_date < today:
-                next_date = next_date.replace(year=today.year + 1)
-            days_left = (next_date - today).days
-            date_str = f"каждый год {event_date[5:]}"
+            # Формируем дату в текущем году
+            this_year_date = date_obj.replace(year=today.year)
+            date_display = f"каждый год {event_date[5:]}"  # ДД.ММ
+
+            if this_year_date < today:
+                # Уже была в этом году – сколько дней прошло
+                days_diff = (today - this_year_date).days
+                if days_diff == 0:
+                    status = " (сегодня!)"
+                else:
+                    status = f" (прошло {days_diff} дн. назад)"
+            else:
+                # Ещё не наступила – сколько осталось
+                days_diff = (this_year_date - today).days
+                if days_diff == 0:
+                    status = " (сегодня!)"
+                else:
+                    status = f" (через {days_diff} дн.)"
         else:
-            days_left = (date_obj - today).days
-            date_str = event_date
+            # Однократная дата
+            date_display = event_date  # полная дата
+            if date_obj < today:
+                days_diff = (today - date_obj).days
+                if days_diff == 0:
+                    status = " (сегодня!)"
+                else:
+                    status = f" (прошло {days_diff} дн. назад)"
+            else:
+                days_diff = (date_obj - today).days
+                if days_diff == 0:
+                    status = " (сегодня!)"
+                else:
+                    status = f" (через {days_diff} дн.)"
 
-        if days_left >= 0:
-            status = f" (через {days_left} дн.)"
-        else:
-            status = " (прошла)"
+        text += f"• *{title}* — {date_display}{status}\n"
+        text += f"  `Напом. за {remind_days} дн.\n"
 
-        # Формируем красивое имя создателя
-        creator = f"@{username}" if username else creator_id
-
-        text += f"• *{title}* — {date_str}{status}\n"
-        text += f"  `id:{date_id}` | напом. за {remind_days} дн.\n"
-        text += f"  👤 Добавил(а): {creator}\n\n"
-
-    text += "Удалить: /deldate <id>"
+    text += "\nДля удаления используй /deldate (без ID)"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
 
