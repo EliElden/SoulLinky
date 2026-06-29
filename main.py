@@ -1,6 +1,4 @@
-from config import bot
 from telebot import types
-import time
 import db 
 from config import bot, ADMIN_IDS
 from datetime import datetime
