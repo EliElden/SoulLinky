@@ -1,11 +1,8 @@
-from config import bot
 from telebot import types
-import time
 import db 
 from config import bot, ADMIN_IDS
 from datetime import datetime
 import threading
-import requests
 from PIL import Image, ImageDraw, ImageFont
 import io
 import tempfile
@@ -45,9 +42,8 @@ waiting_for_date_confirm = {}   # данные для подтверждения
 # ==========================================
 # ФУНКЦИИ-ПОМОЩНИКИ (ИНТЕРФЕЙС И ТЕКСТЫ)
 # ==========================================
-
 def get_main_keyboard(user_id):
-    """Создает умную клавиатуру: одиноким — 2 кнопки, влюбленным — 3"""
+    """Создает умную клавиатуру: одиноким — 2 кнопки, влюбленным — 3 (и более)"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     
     btn_help = types.KeyboardButton("❓ Помощь")
@@ -58,8 +54,13 @@ def get_main_keyboard(user_id):
         btn_wishlist = types.KeyboardButton("🎁 Вишлист")
         btn_dates = types.KeyboardButton("📅 Даты")
         btn_streak = types.KeyboardButton("🔥 Серия")
+        btn_mood = types.KeyboardButton("🎭 Настроение")
+        btn_timeout = types.KeyboardButton("🛑 В угол") 
+        
+        # Компонуем по рядам для красоты
         markup.row(btn_love, btn_wishlist)
         markup.row(btn_dates, btn_streak)
+        markup.row(btn_mood, btn_timeout) 
 
     markup.row(btn_help, btn_start)
     return markup
@@ -130,15 +131,17 @@ def help_command(message):
         "/connect — Подключиться к котейке\n"
         "/disconnect — Отключиться от котейки \n"
         "/love — Отправить послание котейке \n"
-        "/streak — Показать текущую серию \n\n"
+        "/streak — Показать текущую серию \n"
+        "/timeout — Отправить подумать над поведением 🛑\n\n"
         "📅 *Важные даты:*\n"
         "/adddate — Добавить общую важную дату\n"
         "/mydates — Список всех важных дат\n"
         "/deldate — Удалить важную дату\n\n"
         "💕 *Вишлист пары:*\n"
         "/wishlist — Посмотреть общий вишлист\n"
-        "/addwish — Добавить подарок, свидание или желание\n\n"
-        "/delwish — Удалить элемент вишлиста\n\n"
+        "/addwish — Добавить подарок, свидание или желание\n"
+        "/delwish — Удалить элемент вишлиста\n"
+        "/mood — Отметить, как ты себя чувствуешь\n\n"
         "🛡 *Безопасность:*\n"
         "/block — Заблокировать котейку\n"
         "/unblock — Разблокировать котейку\n"
@@ -687,6 +690,15 @@ def admin_stats(message):
 def love(message):
     """Инициализация процесса отправки любовного послания"""
     if db.get_partner(message.chat.id):
+        
+        # --- ПРОВЕРКА НА УГОЛ ---
+        timeout = db.get_timeout(message.chat.id)
+        if timeout:
+            time_left = int((timeout - datetime.now()).total_seconds() / 60) + 1
+            bot.send_message(message.chat.id, f"🛑 Тихо! Тебя отправили в угол думать над своим поведением.\nОсталось сидеть: {time_left} мин. 🤫")
+            return
+        # ------------------------------
+
         # Включаем состояние ожидания сообщения
         waiting_for_message[message.chat.id] = True
         
@@ -1054,6 +1066,106 @@ def generate_cat_meme_optimized(image_bytes, text, max_size=(1200, 1200), qualit
         return None
 
 # ==========================================
+# ШУТОЧНЫЙ ТАЙМАУТ (В УГОЛ!)
+# ==========================================
+
+@bot.message_handler(commands=['timeout'])
+def timeout_command(message):
+    user_id = message.chat.id
+    partner_id = db.get_partner(user_id)
+    
+    if not partner_id:
+        bot.send_message(user_id, "❌ У тебя нет пары. Кого наказывать-то?")
+        return
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("На 5 минут ⏱", callback_data="timeout_5"),
+        types.InlineKeyboardButton("На 15 минут ⏳", callback_data="timeout_15")
+    )
+    markup.add(
+        types.InlineKeyboardButton("На 1 час 🕰", callback_data="timeout_60"),
+        types.InlineKeyboardButton("Простить (снять) 😇", callback_data="timeout_0")
+    )
+    markup.add(types.InlineKeyboardButton("Любезно передумать ❌", callback_data="timeout_cancel"))
+
+    bot.send_message(user_id, "В угол! На сколько отправим подумать над своим поведением? 🛑", reply_markup=markup)
+
+# --- ОБРАБОТЧИК ДЛЯ КНОПКИ ---
+@bot.message_handler(func=lambda message: message.text == "🛑 В угол")
+def timeout_button_handler(message):
+    timeout_command(message)
+# --------------------------------------------
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("timeout_"))
+def process_timeout(call):
+    user_id = call.message.chat.id
+    action = call.data.split("_")[1]
+
+    if action == "cancel":
+        bot.edit_message_text("Отмена. Никто не наказан 😇", user_id, call.message.message_id)
+        return
+
+    partner_id = db.get_partner(user_id)
+    if not partner_id:
+        bot.edit_message_text("❌ Ошибка: котейка потерян(а).", user_id, call.message.message_id)
+        return
+
+    minutes = int(action)
+    initiator_text = get_text_by_gender(user_id, "Твой котик отправил", "Твоя кошечка отправила")
+
+    if minutes == 0:
+        db.clear_timeout(partner_id)
+        bot.edit_message_text("Ты милосердно прощаешь котейку 😇", user_id, call.message.message_id)
+        try:
+            pardon_text = get_text_by_gender(user_id, "Твой котик сменил", "Твоя кошечка сменила")
+            bot.send_message(partner_id, f"✨ {pardon_text} гнев на милость. Ты можешь выйти из угла и снова писать послания!")
+        except:
+            pass
+    else:
+        db.set_timeout(partner_id, minutes)
+        bot.edit_message_text(f"🛑 Котейка отправлен(а) в угол на {minutes} минут!", user_id, call.message.message_id)
+        try:
+            bot.send_message(
+                partner_id, 
+                f"🛑 *ВНИМАНИЕ!*\n{initiator_text} тебя подумать над своим поведением в угол на {minutes} минут!\nОтправка посланий временно заблокирована. 🤫", 
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+            
+        # --- ПОЛНАЯ ПЕРСОНАЛИЗАЦИЯ ТАЙМЕРА ---
+        def notify_timeout_end():
+            try:
+                db.cursor.execute('SELECT timeout_until FROM users WHERE user_id = ?', (partner_id,))
+                res = db.cursor.fetchone()
+                
+                if res and res[0]:
+                    timeout_time = datetime.strptime(res[0], "%Y-%m-%d %H:%M:%S")
+                    if datetime.now() >= timeout_time:
+                        db.clear_timeout(partner_id)
+                        
+                        # Пол того, кто сидел в углу (partner_id)
+                        thought_word = get_text_by_gender(partner_id, "подумал", "подумала")
+                        
+                        # Пол того, кто наказывал (user_id)
+                        target_text = get_text_by_gender(user_id, "своего котика", "свою кошечку")
+                        waiter_text = get_text_by_gender(user_id, "твой котик ждет", "твоя кошечка ждет")
+                        
+                        unban_msg = (
+                            "⏰ *Дзинь-дзинь!*\n\n"
+                            "Твоё время в углу подошло к концу! 🎉\n"
+                            f"Надеюсь, ты хорошо {thought_word} над своим поведением и больше не будешь расстраивать {target_text}. 😼\n\n"
+                            f"А теперь бегом извиняться, мириться и обниматься, {waiter_text}! 🥺💕"
+                        )
+                        bot.send_message(partner_id, unban_msg, parse_mode="Markdown")
+            except Exception as e:
+                print(f"Ошибка в таймере угла: {e}")
+
+        # Запускаем фоновый таймер (переводим минуты в секунды)
+        threading.Timer(minutes * 60, notify_timeout_end).start()
+
+# ==========================================
 # ЧЕРНЫЙ СПИСОК (БЛОКИРОВКА)
 # ==========================================
 
@@ -1199,88 +1311,66 @@ def add_date_start(message):
 
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_date_title)
 def get_date_title(message):
-    """Получает название даты"""
-    if message.text.startswith('/'):
+    if message.text.startswith('/') or message.text in ["💌 Послание", "❓ Помощь", "🔄 Перезапуск"]:
         waiting_for_date_title.pop(message.chat.id, None)
         waiting_for_date_partner.pop(message.chat.id, None)
         send_menu(message.chat.id, "Отмена.")
-        return
-
-    if message.text in ["💌 Послание", "❓ Помощь", "🔄 Перезапуск"]:
-        waiting_for_date_title.pop(message.chat.id, None)
-        waiting_for_date_partner.pop(message.chat.id, None)
-        if message.text == "💌 Послание":
-            love(message)
-        elif message.text == "❓ Помощь":
-            help_command(message)
-        else:
-            start(message)
         return
 
     waiting_for_date_title.pop(message.chat.id, None)
     waiting_for_date_value[message.chat.id] = message.text
 
     markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_date_title"))
     markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
-    bot.send_message(message.chat.id, "📆 Введи дату в формате ДД.ММ.ГГГГ (например: 14.02.2025):",
+    bot.send_message(message.chat.id, "📆 Введи дату в формате ДД.ММ.ГГГГ (например: 14.02.2025):", 
                      reply_markup=markup)
 
 
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_date_value)
 def get_date_value(message):
-    """Получает дату"""
     if message.text.startswith('/'):
         waiting_for_date_value.pop(message.chat.id, None)
         waiting_for_date_partner.pop(message.chat.id, None)
         send_menu(message.chat.id, "Отмена.")
         return
-
     try:
         date_obj = datetime.strptime(message.text, "%d.%m.%Y")
-        event_date = date_obj.strftime("%Y-%m-%d")
-
         title = waiting_for_date_value.pop(message.chat.id, None)
-        waiting_for_date_type[message.chat.id] = (title, event_date, message.text)
+        waiting_for_date_type[message.chat.id] = (title, date_obj.strftime("%Y-%m-%d"), message.text)
 
         markup = types.InlineKeyboardMarkup()
-        btn_once = types.InlineKeyboardButton("Однократная 🔂", callback_data="date_type_once")
-        btn_annual = types.InlineKeyboardButton("Ежегодная 🔁", callback_data="date_type_annual")
-        btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate")
-        markup.add(btn_once, btn_annual)
-        markup.add(btn_cancel)
-
-        bot.send_message(message.chat.id, "🔄 Это повторяющаяся дата (каждый год) или однократная?",
+        markup.add(types.InlineKeyboardButton("Однократная 🔂", callback_data="date_type_once"), 
+                   types.InlineKeyboardButton("Ежегодная 🔁", callback_data="date_type_annual"))
+        markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_date_value"), 
+                   types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+        bot.send_message(message.chat.id, "🔄 Это повторяющаяся дата (каждый год) или однократная?", 
                          reply_markup=markup)
     except ValueError:
-        bot.send_message(message.chat.id, "❌ Неверный формат! Введи дату как ДД.ММ.ГГГГ (например: 14.02.2025)")
+        bot.send_message(message.chat.id, "❌ Неверный формат! Введи дату как ДД.ММ.ГГГГ")
 
 
 @bot.callback_query_handler(func=lambda call: call.data in ["date_type_once", "date_type_annual", "cancel_adddate"])
 def process_date_type(call):
-    """Обрабатывает выбор типа даты (ежегодная/однократная)"""
     user_id = call.message.chat.id
-
     if call.data == "cancel_adddate":
-        for d in [waiting_for_date_title, waiting_for_date_value, waiting_for_date_type,
-                  waiting_for_date_remind, waiting_for_date_partner]:
+        for d in [waiting_for_date_title, waiting_for_date_value, waiting_for_date_type, waiting_for_date_remind, waiting_for_date_partner]:
             d.pop(user_id, None)
-        bot.edit_message_text("❌ Добавление даты отменено.", user_id, call.message.message_id)
+        bot.edit_message_text("❌ Добавление отменено.", user_id, call.message.message_id)
         send_menu(user_id)
         return
 
     is_annual = 1 if call.data == "date_type_annual" else 0
-    title, event_date, original_date_str = waiting_for_date_type[user_id]
-    waiting_for_date_type.pop(user_id, None)
+    title, event_date, original_date_str = waiting_for_date_type.pop(user_id)
     waiting_for_date_remind[user_id] = (title, event_date, is_annual, original_date_str)
 
     markup = types.InlineKeyboardMarkup()
     for days, label in [(1, "За 1 день"), (3, "За 3 дня"), (7, "За неделю"), (30, "За месяц")]:
         markup.add(types.InlineKeyboardButton(label, callback_data=f"remind_{days}"))
-    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
-
-    bot.edit_message_text("⏰ За сколько дней до даты прислать напоминание?",
-                          user_id, call.message.message_id, reply_markup=markup)
-
+    markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_date_type"), 
+               types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+    bot.edit_message_text("⏰ За сколько дней до даты прислать напоминание?", user_id, call.message.message_id, 
+                          reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("remind_"))
 def process_remind_days(call):
@@ -1288,44 +1378,69 @@ def process_remind_days(call):
     remind_days = int(call.data.split("_")[1])
 
     if user_id not in waiting_for_date_remind:
-        bot.answer_callback_query(call.id, "❌ Сессия истекла, начни заново через /adddate")
+        bot.answer_callback_query(call.id, "❌ Сессия истекла")
         return
 
-    title, event_date, is_annual, original_date_str = waiting_for_date_remind[user_id]
-    partner_id = waiting_for_date_partner.get(user_id)
+    title, event_date, is_annual, original_date_str = waiting_for_date_remind.pop(user_id)
+    partner_id = waiting_for_date_partner.pop(user_id)
 
-    if not partner_id:
-        bot.edit_message_text("❌ Ошибка: партнёр не найден.", user_id, call.message.message_id)
-        send_menu(user_id)
-        return
+    waiting_for_date_confirm[user_id] = {'title': title, 'event_date': event_date, 'is_annual': is_annual, 'remind_days': remind_days, 'original_date_str': original_date_str, 'partner_id': partner_id}
 
-    # Сохраняем в состояние подтверждения
-    waiting_for_date_confirm[user_id] = {
-        'title': title,
-        'event_date': event_date,
-        'is_annual': is_annual,
-        'remind_days': remind_days,
-        'original_date_str': original_date_str,
-        'partner_id': partner_id
-    }
-
-    # Очищаем старые состояния
-    waiting_for_date_remind.pop(user_id, None)
-    waiting_for_date_partner.pop(user_id, None)
-
-    # Показываем сводку
     date_display = original_date_str if not is_annual else original_date_str[:5]
     markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_date_add"),
-        types.InlineKeyboardButton("❌ Отменить", callback_data="cancel_date_add")
-    )
+    markup.add(types.InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_date_add"))
+    markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_date_remind"), 
+               types.InlineKeyboardButton("❌ Отменить", callback_data="cancel_date_add"))
+    
     bot.edit_message_text(
         f"📅 Проверь данные:\n\nНазвание: {title}\nДата: {date_display}\n"
         f"Тип: {'Ежегодная' if is_annual else 'Однократная'}\n"
         f"Напоминание за {remind_days} дн.\n\nВсё верно?",
         user_id, call.message.message_id, reply_markup=markup
     )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("back_date_"))
+def handle_date_back(call):
+    user_id = call.message.chat.id
+    if call.data == "back_date_title":
+        waiting_for_date_value.pop(user_id, None)
+        waiting_for_date_title[user_id] = True
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+        bot.edit_message_text("📅 Введи название важной даты:", user_id, call.message.message_id, reply_markup=markup)
+        
+    elif call.data == "back_date_value":
+        data = waiting_for_date_type.pop(user_id, None)
+        if data:
+            waiting_for_date_value[user_id] = data[0] # возвращаем title
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_date_title"), types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+            bot.edit_message_text("📆 Введи дату в формате ДД.ММ.ГГГГ заново:", user_id, call.message.message_id, reply_markup=markup)
+
+    elif call.data == "back_date_type":
+        data = waiting_for_date_remind.pop(user_id, None)
+        if data:
+            waiting_for_date_type[user_id] = (data[0], data[1], data[3])
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("Однократная 🔂", callback_data="date_type_once"), 
+                       types.InlineKeyboardButton("Ежегодная 🔁", callback_data="date_type_annual"))
+            markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_date_value"), 
+                       types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+            bot.edit_message_text("🔄 Это повторяющаяся дата или однократная?", user_id, call.message.message_id, 
+                                  reply_markup=markup)
+
+    elif call.data == "back_date_remind":
+        data = waiting_for_date_confirm.pop(user_id, None)
+        if data:
+            waiting_for_date_remind[user_id] = (data['title'], data['event_date'], data['is_annual'], data['original_date_str'])
+            waiting_for_date_partner[user_id] = data['partner_id']
+            markup = types.InlineKeyboardMarkup()
+            for days, label in [(1, "За 1 день"), (3, "За 3 дня"), (7, "За неделю"), (30, "За месяц")]:
+                markup.add(types.InlineKeyboardButton(label, callback_data=f"remind_{days}"))
+            markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_date_type"), 
+                       types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_adddate"))
+            bot.edit_message_text("⏰ За сколько дней до даты прислать напоминание?", user_id, call.message.message_id, 
+                                  reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data in ["confirm_date_add", "cancel_date_add"])
 def confirm_date_add(call):
@@ -1362,13 +1477,13 @@ def list_dates(message):
         return
 
     today = datetime.now().date()
-
     text = "📅 *Ваши общие важные даты:*\n\n"
-    for date_id, title, event_date, is_annual, remind_days in dates:
+    
+    # Теперь распаковываем 7 переменных, включая создателя и его ник
+    for date_id, title, event_date, is_annual, remind_days, creator_id, username in dates:
         date_obj = datetime.strptime(event_date, "%Y-%m-%d").date()
 
         if is_annual:
-            # Следующее событие в этом году или следующем
             next_date = date_obj.replace(year=today.year)
             if next_date < today:
                 next_date = next_date.replace(year=today.year + 1)
@@ -1383,11 +1498,21 @@ def list_dates(message):
         else:
             status = " (прошла)"
 
+        # Формируем красивое имя создателя
+        creator = f"@{username}" if username else creator_id
+
         text += f"• *{title}* — {date_str}{status}\n"
         text += f"  `id:{date_id}` | напом. за {remind_days} дн.\n"
+        text += f"  👤 Добавил(а): {creator}\n\n"
 
-    text += "\nУдалить: `/deldate <id>`"
+    text += "Удалить: /deldate <id>"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+
+# ==========================================
+# УДАЛЕНИЕ ВИШЛИСТА И ДАТ
+#==========================================
+
 
 def delwish_interactive(user_id):
     """Запускает процесс удаления вишлиста"""
@@ -1480,6 +1605,36 @@ def process_delete_id(message):
             parse_mode="Markdown", reply_markup=confirm_markup)
         waiting_for_deldate_id.pop(user_id, None)
 
+# Обработчик кнопок "Подтвердить" для удаления из вишлиста и дат
+@bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_delwish_") or call.data.startswith("confirm_deldate_"))
+def confirm_delete_action(call):
+    user_id = call.message.chat.id
+    
+    # Сценарий: Удаление из вишлиста
+    if call.data.startswith("confirm_delwish_"):
+        # Извлекаем ID из строки "confirm_delwish_15"
+        item_id = int(call.data.split("_")[2]) 
+        success = db.delete_wish(item_id, user_id)
+        
+        if success:
+            bot.edit_message_text("✅ Элемент успешно удален из вишлиста.", user_id, call.message.message_id)
+        else:
+            bot.edit_message_text("❌ Ошибка при удалении или элемент уже удален.", user_id, call.message.message_id)
+            
+    # Сценарий: Удаление важной даты
+    elif call.data.startswith("confirm_deldate_"):
+        # Извлекаем ID из строки "confirm_deldate_5"
+        item_id = int(call.data.split("_")[2]) 
+        success = db.delete_date(item_id, user_id)
+        
+        if success:
+            bot.edit_message_text("✅ Важная дата успешно удалена.", user_id, call.message.message_id)
+        else:
+            bot.edit_message_text("❌ Ошибка при удалении или дата уже удалена.", user_id, call.message.message_id)
+            
+    # Возвращаем меню
+    send_menu(user_id)
+
 # ==========================================
 # ВИШЛИСТ ПАРЫ
 # ==========================================
@@ -1494,9 +1649,9 @@ def add_wish_start(message):
     markup = types.InlineKeyboardMarkup()
     btn_gift = types.InlineKeyboardButton("🎁 Подарок", callback_data="wish_gift")
     btn_date = types.InlineKeyboardButton("🌆 Свидание", callback_data="wish_date")
-    btn_wish = types.InlineKeyboardButton("💭 Желание", callback_data="wish_wish")   # новая кнопка
+    btn_wish = types.InlineKeyboardButton("💭 Желание", callback_data="wish_wish")   
     btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="wish_cancel")
-    markup.add(btn_gift, btn_date, btn_wish)   # можно в одну строку три кнопки
+    markup.add(btn_gift, btn_date, btn_wish)   
     markup.add(btn_cancel)
     bot.send_message(message.chat.id, "Что хочешь добавить в вишлист?", reply_markup=markup)
 
@@ -1504,7 +1659,6 @@ def add_wish_start(message):
 def process_wish_type(call):
     user_id = call.message.chat.id
     if call.data == "wish_cancel":
-        # очистка состояний
         waiting_for_wish_type.pop(user_id, None)
         waiting_for_wish_title.pop(user_id, None)
         waiting_for_wish_description.pop(user_id, None)
@@ -1512,24 +1666,18 @@ def process_wish_type(call):
         send_menu(user_id)
         return
 
-    # Определяем тип
-    if call.data == "wish_gift":
-        wish_type = "gift"
-    elif call.data == "wish_date":
-        wish_type = "date"
-    elif call.data == "wish_wish":
-        wish_type = "wish"
-    else:
-        return
-
+    wish_type = "gift" if call.data == "wish_gift" else ("date" if call.data == "wish_date" else "wish")
     waiting_for_wish_type[user_id] = wish_type
     waiting_for_wish_title[user_id] = True
-    bot.edit_message_text("✍️ Введи название:", user_id, call.message.message_id)
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_wish_type"))
+    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="wish_cancel"))
+    bot.edit_message_text("✍️ Введи название:", user_id, call.message.message_id, reply_markup=markup)
 
 
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_wish_title)
 def get_wish_title(message):
-
     if message.text.startswith('/'):
         waiting_for_wish_title.pop(message.chat.id, None)
         waiting_for_wish_type.pop(message.chat.id, None)
@@ -1537,15 +1685,12 @@ def get_wish_title(message):
         return
 
     waiting_for_wish_title.pop(message.chat.id, None)
+    waiting_for_wish_description[message.chat.id] = {"title": message.text}
 
-    waiting_for_wish_description[message.chat.id] = {
-        "title": message.text
-    }
-
-    bot.send_message(
-        message.chat.id,
-        "📝 Теперь введи описание:"
-    )
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_wish_title"))
+    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="wish_cancel"))
+    bot.send_message(message.chat.id, "📝 Теперь введи описание:", reply_markup=markup)
 
 
 @bot.message_handler(func=lambda m: m.chat.id in waiting_for_wish_description)
@@ -1558,30 +1703,52 @@ def get_wish_description(message):
 
     user_id = message.chat.id
     title = waiting_for_wish_description[user_id]["title"]
-    description = message.text
     wish_type = waiting_for_wish_type[user_id]
 
-    # Сохраняем данные в состояние подтверждения
-    waiting_for_wish_confirm[user_id] = {
-        'type': wish_type,
-        'title': title,
-        'description': description
-    }
-
-    # Очищаем старые состояния
+    waiting_for_wish_confirm[user_id] = {'type': wish_type, 'title': title, 'description': message.text}
     waiting_for_wish_description.pop(user_id, None)
     waiting_for_wish_type.pop(user_id, None)
 
-    # Показываем сводку
     emoji = "🎁" if wish_type == "gift" else ("🌆" if wish_type == "date" else "💭")
     markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_wish_add"))
     markup.add(
-        types.InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_wish_add"),
+        types.InlineKeyboardButton("⬅️ Назад", callback_data="back_wish_desc"),
         types.InlineKeyboardButton("❌ Отменить", callback_data="cancel_wish_add")
     )
-    bot.send_message(user_id,
-        f"📝 Проверь данные:\n\n{emoji} *{title}*\n📝 {description}\n\nВсё верно?",
-        parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(user_id, f"📝 Проверь данные:\n\n{emoji} *{title}*\n📝 {message.text}\n\nВсё верно?", 
+                     parse_mode="Markdown", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("back_wish_"))
+def handle_wish_back(call):
+    user_id = call.message.chat.id
+    if call.data == "back_wish_type":
+        waiting_for_wish_title.pop(user_id, None)
+        waiting_for_wish_type.pop(user_id, None)
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🎁 Подарок", callback_data="wish_gift"), 
+                   types.InlineKeyboardButton("🌆 Свидание", callback_data="wish_date"), 
+                   types.InlineKeyboardButton("💭 Желание", callback_data="wish_wish"))
+        markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="wish_cancel"))
+        bot.edit_message_text("Что хочешь добавить в вишлист?", user_id, call.message.message_id, reply_markup=markup)
+        
+    elif call.data == "back_wish_title":
+        waiting_for_wish_description.pop(user_id, None)
+        waiting_for_wish_title[user_id] = True
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_wish_type"), 
+                   types.InlineKeyboardButton("Отменить ❌", callback_data="wish_cancel"))
+        bot.edit_message_text("✍️ Введи название:", user_id, call.message.message_id, reply_markup=markup)
+        
+    elif call.data == "back_wish_desc":
+        data = waiting_for_wish_confirm.pop(user_id, None)
+        if data:
+            waiting_for_wish_description[user_id] = {"title": data["title"]}
+            waiting_for_wish_type[user_id] = data["type"]
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="back_wish_title"), 
+                       types.InlineKeyboardButton("Отменить ❌", callback_data="wish_cancel"))
+            bot.edit_message_text("📝 Введи описание заново:", user_id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data in ["confirm_wish_add", "cancel_wish_add"])
 def confirm_wish_add(call):
@@ -1652,7 +1819,7 @@ def wishlist(message):
             f"👤 Добавил(а): {creator}\n\n"
         )
 
-    text += "Удаление: `/delwish id`"
+    text += "Удалить: /delwish <id>"
 
     bot.send_message(
         message.chat.id,
@@ -1661,6 +1828,161 @@ def wishlist(message):
     )
 
 
+
+# ==========================================
+# МУД-ТРЕКЕР (НАСТРОЕНИЕ)
+# ==========================================
+
+@bot.message_handler(commands=['mood'])
+def mood_command(message):
+    show_mood_menu(message.chat.id)
+
+@bot.message_handler(func=lambda message: message.text == "🎭 Настроение")
+def mood_button_handler(message):
+    show_mood_menu(message.chat.id)
+
+def show_mood_menu(chat_id, message_id=None):
+    if not db.get_partner(chat_id):
+        send_no_partner_error(chat_id)
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_happy = types.InlineKeyboardButton("Счастлив(а) 😊", callback_data="mood_happy")
+    btn_love = types.InlineKeyboardButton("Люблю 🥰", callback_data="mood_love")
+    btn_sad = types.InlineKeyboardButton("Грущу 😢", callback_data="mood_sad")
+    btn_angry = types.InlineKeyboardButton("Злюсь 😠", callback_data="mood_angry")
+    btn_tired = types.InlineKeyboardButton("Устал(а) 😴", callback_data="mood_tired")
+    
+    # Кнопки статистики и журнала в один ряд
+    btn_stats = types.InlineKeyboardButton("📊 Статистика", callback_data="mood_stats")
+    btn_journal = types.InlineKeyboardButton("📖 Журнал", callback_data="mood_journal")
+    btn_cancel = types.InlineKeyboardButton("Отменить ❌", callback_data="mood_cancel")
+    
+    markup.add(btn_happy, btn_love, btn_sad, btn_angry, btn_tired)
+    markup.row(btn_stats, btn_journal)
+    markup.add(btn_cancel)
+    
+    latest_mood = db.get_latest_mood(chat_id)
+    current_status = ""
+    if latest_mood:
+        mood_emoji = {
+            "happy": "😊", "love": "🥰", "sad": "😢", 
+            "angry": "😠", "tired": "😴"
+        }.get(latest_mood[0], "")
+        current_status = f"\nТвое текущее настроение: {mood_emoji}\n"
+
+    text = f"Как ты себя чувствуешь сейчас? 🎭{current_status}"
+
+    # Если message_id передан, редактируем сообщение (для кнопки Назад), иначе отправляем новое
+    if message_id:
+        bot.edit_message_text(text, chat_id, message_id, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("mood_"))
+def process_mood_selection(call):
+    user_id = call.message.chat.id
+    
+    if call.data == "mood_cancel":
+        bot.edit_message_text("Выбор настроения отменен.", user_id, call.message.message_id)
+        return
+
+    # Обработка кнопки "Назад" (возвращает основное меню настроения)
+    if call.data == "mood_back":
+        show_mood_menu(user_id, call.message.message_id)
+        return
+
+    # --- СТАТИСТИКА ---
+    if call.data == "mood_stats":
+        partner_id = db.get_partner(user_id)
+        if not partner_id:
+            bot.edit_message_text("❌ У тебя нет пары для просмотра статистики.", user_id, call.message.message_id)
+            return
+        
+        my_stats = db.get_mood_stats(user_id)
+        partner_stats = db.get_mood_stats(partner_id)
+        
+        mood_names = {"happy": "Счастье 😊", "love": "Любовь 🥰", "sad": "Грусть 😢", "angry": "Злость 😠", "tired": "Усталость 😴"}
+        
+        def format_stats(stats_dict):
+            if not stats_dict:
+                return "Пока нет записей 📭"
+            lines = []
+            sorted_stats = sorted(stats_dict.items(), key=lambda item: item[1], reverse=True)
+            for mood, count in sorted_stats:
+                name = mood_names.get(mood, mood)
+                lines.append(f"• {name}: `{count}` раз(а)")
+            return "\n".join(lines)
+        
+        partner_name = get_user_display_name(partner_id)
+        text = (
+            "📊 *Статистика за всё время*\n\n"
+            f"👤 *Твои эмоции:*\n{format_stats(my_stats)}\n\n"
+            f"🐱 *Эмоции {partner_name}:*\n{format_stats(partner_stats)}"
+        )
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="mood_back"))
+        bot.edit_message_text(text, user_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        return
+
+    # --- ЖУРНАЛ НАСТРОЕНИЙ ---
+    if call.data == "mood_journal":
+        partner_id = db.get_partner(user_id)
+        if not partner_id:
+            bot.edit_message_text("❌ У тебя нет пары для просмотра журнала.", user_id, call.message.message_id)
+            return
+
+        history = db.get_mood_history(user_id, partner_id, limit=15)
+
+        if not history:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="mood_back"))
+            bot.edit_message_text("📭 Журнал настроений пока пуст.", user_id, call.message.message_id, reply_markup=markup)
+            return
+
+        mood_emoji = {"happy": "😊", "love": "🥰", "sad": "😢", "angry": "😠", "tired": "😴"}
+        text = "📖 *Журнал настроений (последние 15 записей):*\n\n"
+
+        for uid, mood, created_at, username in history:
+            # Превращаем '2026-06-29 14:30:00' в '29.06 14:30'
+            try:
+                dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+                date_str = dt.strftime("%d.%m %H:%M")
+            except:
+                date_str = created_at[:16] # Резервный вариант, если формат другой
+
+            name = "Ты" if uid == user_id else get_user_display_name(uid)
+            emoji = mood_emoji.get(mood, "🎭")
+            
+            text += f"`{date_str}` | {name}: {emoji}\n"
+
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="mood_back"))
+        bot.edit_message_text(text, user_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        return
+
+    # --- УСТАНОВКА НАСТРОЕНИЯ ---
+    selected_mood = call.data.split('_')[1]
+    db.set_mood(user_id, selected_mood)
+    bot.edit_message_text("Твое настроение обновлено! ✨", user_id, call.message.message_id)
+    
+    partner_id = db.get_partner(user_id)
+    if partner_id:
+        initiator = get_text_by_gender(user_id, "Твой котик 🐈‍⬛", "Твоя кошечка 🐈")
+        mood_messages = {
+            "happy": get_text_by_gender(user_id, "счастлив 😊", "счастлива 😊"),
+            "love": "посылает тебе свою любовь 🥰",
+            "sad": "грустит 😢. Самое время для поддержки!",
+            "angry": "злится 😠. Осторожно!",
+            "tired": get_text_by_gender(user_id, "устал 😴", "устала 😴")
+        }
+        status_text = mood_messages.get(selected_mood, "изменил(а) настроение.")
+        
+        try:
+            bot.send_message(partner_id, f"🎭 *Обновление статуса:*\n{initiator} сейчас {status_text}", parse_mode="Markdown")
+        except:
+            pass
 
 # ==========================================
 # ЛОВУШКА ДЛЯ СЛУЧАЙНЫХ СООБЩЕНИЙ (ЕСЛИ ОЧИСТИЛИ ИСТОРИЮ)
