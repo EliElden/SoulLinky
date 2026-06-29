@@ -1476,7 +1476,7 @@ def confirm_date_add(call):
 #mydates
 @bot.message_handler(commands=['mydates'])
 def list_dates(message):
-    """Показывает все важные даты пользователя с точным количеством дней"""
+    """Показывает все важные даты пользователя с точным количеством дней и ID"""
     dates = db.get_dates_for_user(message.chat.id)
     if not dates:
         bot.send_message(message.chat.id, "📭 У вас пока нет общих важных дат. Добавь через /adddate")
@@ -1489,42 +1489,25 @@ def list_dates(message):
         date_obj = datetime.strptime(event_date, "%Y-%m-%d").date()
 
         if is_annual:
-            # Формируем дату в текущем году
             this_year_date = date_obj.replace(year=today.year)
-            date_display = f"каждый год {event_date[5:]}"  # ДД.ММ
-
+            date_display = f"каждый год {event_date[5:]}"
             if this_year_date < today:
-                # Уже была в этом году – сколько дней прошло
                 days_diff = (today - this_year_date).days
-                if days_diff == 0:
-                    status = " (сегодня!)"
-                else:
-                    status = f" (прошло {days_diff} дн. назад)"
+                status = f" (прошло {days_diff} дн. назад)" if days_diff != 0 else " (сегодня!)"
             else:
-                # Ещё не наступила – сколько осталось
                 days_diff = (this_year_date - today).days
-                if days_diff == 0:
-                    status = " (сегодня!)"
-                else:
-                    status = f" (через {days_diff} дн.)"
+                status = f" (через {days_diff} дн.)" if days_diff != 0 else " (сегодня!)"
         else:
-            # Однократная дата
-            date_display = event_date  # полная дата
+            date_display = event_date
             if date_obj < today:
                 days_diff = (today - date_obj).days
-                if days_diff == 0:
-                    status = " (сегодня!)"
-                else:
-                    status = f" (прошло {days_diff} дн. назад)"
+                status = f" (прошло {days_diff} дн. назад)" if days_diff != 0 else " (сегодня!)"
             else:
                 days_diff = (date_obj - today).days
-                if days_diff == 0:
-                    status = " (сегодня!)"
-                else:
-                    status = f" (через {days_diff} дн.)"
+                status = f" (через {days_diff} дн.)" if days_diff != 0 else " (сегодня!)"
 
         text += f"• *{title}* — {date_display}{status}\n"
-        text += f"  `Напом. за {remind_days} дн.\n"
+        text += f"  `id:{date_id}` | напом. за {remind_days} дн.\n"
 
     text += "\nДля удаления используй /deldate (без ID)"
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
