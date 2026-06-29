@@ -936,7 +936,7 @@ def process_draft_cat(call):
 
     # 5. Завершение: обновляем клавиатуру без лишнего текста
     bot.edit_message_text("✅ Отправлено с котёнком!", user_id, call.message.message_id)
-    bot.send_message(user_id, "\u200B", reply_markup=get_main_keyboard(user_id))  # невидимый пробел
+    bot.send_message(user_id, "ㅤ", reply_markup=get_main_keyboard(user_id))  # невидимый пробел
     draft_messages.pop(user_id, None)
 
 #Альтернатива - получаем локальное изображение котика
