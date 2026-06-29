@@ -5,11 +5,9 @@ from datetime import datetime
 import threading
 from PIL import Image, ImageDraw, ImageFont
 import io
-import tempfile
 import os
 import random
 import time
-import sys
 
 # ==========================================
 # СИСТЕМА УПРАВЛЕНИЯ СОСТОЯНИЯМИ (ООП ИНКАПСУЛЯЦИЯ)
