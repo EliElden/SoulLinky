@@ -10,6 +10,7 @@ import os
 import random
 import time
 import sys
+import requests
 
 # ==========================================
 # СИСТЕМА УПРАВЛЕНИЯ СОСТОЯНИЯМИ (ООП ИНКАПСУЛЯЦИЯ)
@@ -874,7 +875,7 @@ def process_draft_cat(call):
     if not text:
         text = "🐱 Мур-мур!"
 
-    cat_bytes = get_local_cat_image()
+    cat_bytes = get_random_cat_image()
     if cat_bytes is None:
         bot.edit_message_text("⚠️ Не удалось загрузить картинку кота. Отправляю обычное послание.", user_id, call.message.message_id)
         sender_text = get_text_by_gender(user_id, "твоего котика 🐈‍⬛", "твоей кошечки 🐈")
@@ -900,8 +901,7 @@ def process_draft_cat(call):
     bot.send_message(partner_id, f"💌 Новое послание от {sender_text} (с котёнком 🐱):")
     bot.send_photo(partner_id, photo=io.BytesIO(meme_bytes))
 
-    bot.edit_message_text("✅ Отправлено с котёнком!", user_id, call.message.message_id)
-    bot.send_message(user_id, " ", reply_markup=ui_manager.get_main_keyboard(user_id)) 
+    send_menu(user_id, "✅ Отправлено с котёнком!")
     state.draft_messages.pop(user_id, None)
 
 
@@ -931,21 +931,29 @@ def get_local_cat_image():
 
 
 def get_random_cat_image():
+    """
+    Пытается получить картинку кота из The Cat API с тегами couple,together.
+    При недоступности API – использует локальный резерв из папки cat_images.
+    """
+    # 1. Пробуем API с тегами
     try:
         response = requests.get(
             "https://api.thecatapi.com/v1/images/search",
-            params={"tags": "couple,together"},
+            params={"tags": "couple,together,silly,cute"},
             timeout=3
         )
         if response.status_code == 200:
             data = response.json()
-            if data:
+            if data:  # если есть результат
                 img_url = data[0]['url']
                 img_response = requests.get(img_url, timeout=5)
                 if img_response.status_code == 200:
                     return img_response.content
     except Exception as e:
+        # Логируем ошибку, но не останавливаемся
         print(f"Ошибка API: {e}")
+
+    # 2. Если API не сработал – локальный резерв
     return get_local_cat_image()
 
 
