@@ -222,6 +222,9 @@ def start(message):
     gender = db.bot_db.get_gender(message.chat.id)
 
     if gender:
+        # 👇 ИМЕННО ЭТА СТРОЧКА ИСПРАВЛЯЕТ ПРОБЛЕМУ С ID
+        db.bot_db.add_or_update_user(message.chat.id, gender, message.from_user.username)
+
         if db.bot_db.get_partner(message.chat.id):
             status_text = get_text_by_gender(message.chat.id, "подключен", "подключена")
             target_text = get_target_partner_text(message.chat.id) 
