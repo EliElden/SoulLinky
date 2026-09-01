@@ -34,6 +34,24 @@ class BotDatabase(BaseDatabase):
     @details Наследуется от BaseDatabase, реализуя все необходимые запросы (Repository).
     """
 
+    def save_gcal_event_id(self, date_id: int, user_id: int, event_id: str):
+        self.cursor.execute('SELECT user1_id, user2_id FROM important_dates WHERE id = ?', (date_id,))
+        row = self.cursor.fetchone()
+        if row:
+            if row[0] == user_id:
+                self.cursor.execute('UPDATE important_dates SET gcal_event_id_u1 = ? WHERE id = ?', (event_id, date_id))
+            elif row[1] == user_id:
+                self.cursor.execute('UPDATE important_dates SET gcal_event_id_u2 = ? WHERE id = ?', (event_id, date_id))
+            self.commit()
+
+    def get_gcal_event_id(self, date_id: int, user_id: int):
+        self.cursor.execute('SELECT user1_id, user2_id, gcal_event_id_u1, gcal_event_id_u2 FROM important_dates WHERE id = ?', (date_id,))
+        row = self.cursor.fetchone()
+        if row:
+            if row[0] == user_id: return row[2]
+            elif row[1] == user_id: return row[3]
+        return None
+
     def init_db(self):
         """
         @brief Инициализирует структуру базы данных при запуске бота.
@@ -114,6 +132,18 @@ class BotDatabase(BaseDatabase):
 
         self.cursor.execute("PRAGMA table_info(users)")
         existing_columns = [column[1] for column in self.cursor.fetchall()]
+
+        self.cursor.execute("PRAGMA table_info(important_dates)")
+        date_columns = [column[1] for column in self.cursor.fetchall()]
+
+        if 'gcal_event_id_u1' not in date_columns:
+            self.cursor.execute('ALTER TABLE important_dates ADD COLUMN gcal_event_id_u1 TEXT')
+            self.cursor.execute('ALTER TABLE important_dates ADD COLUMN gcal_event_id_u2 TEXT')
+            print("🔧 База данных обновлена: добавлены колонки gcal_event_id")
+
+        if 'google_creds' not in existing_columns:
+            self.cursor.execute('ALTER TABLE users ADD COLUMN google_creds TEXT')
+            print("🔧 База данных обновлена: добавлена колонка 'google_creds'")
 
         if 'username' not in existing_columns:
             self.cursor.execute('ALTER TABLE users ADD COLUMN username TEXT')
@@ -560,6 +590,33 @@ class BotDatabase(BaseDatabase):
         @brief Досрочно снимает таймаут с пользователя.
         """
         self.cursor.execute('UPDATE users SET timeout_until = NULL WHERE user_id = ?', (user_id,))
+        self.commit()
+
+    # ==========================================
+    # ФУНКЦИИ ДЛЯ GOOGLE КАЛЕНДАРЯ
+    # ==========================================
+
+    def save_google_creds(self, user_id: int, creds_json: str):
+        """
+        @brief Сохраняет токены доступа Google API.
+        """
+        self.cursor.execute('UPDATE users SET google_creds = ? WHERE user_id = ?', (creds_json, user_id))
+        self.commit()
+
+    def get_google_creds(self, user_id: int):
+        """
+        @brief Возвращает сохраненные токены Google API.
+        @return Строка JSON с токенами или None.
+        """
+        self.cursor.execute('SELECT google_creds FROM users WHERE user_id = ?', (user_id,))
+        result = self.cursor.fetchone()
+        return result[0] if result and result[0] else None
+
+    def delete_google_creds(self, user_id: int):
+        """
+        @brief Удаляет привязку Google Календаря для пользователя.
+        """
+        self.cursor.execute('UPDATE users SET google_creds = NULL WHERE user_id = ?', (user_id,))
         self.commit()
 
 # Инициализируем глобальный объект для обратной совместимости с main.py
