@@ -152,6 +152,10 @@ class BotDatabase(BaseDatabase):
         if 'timeout_until' not in existing_columns:
             self.cursor.execute('ALTER TABLE users ADD COLUMN timeout_until TEXT')
             print("🔧 База данных обновлена: добавлена колонка 'timeout_until'")
+
+        if 'language' not in existing_columns:
+            self.cursor.execute("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'ru'")
+            print("🔧 База данных обновлена: добавлена колонка 'language'")
             
         self.commit()
 
@@ -617,6 +621,29 @@ class BotDatabase(BaseDatabase):
         @brief Удаляет привязку Google Календаря для пользователя.
         """
         self.cursor.execute('UPDATE users SET google_creds = NULL WHERE user_id = ?', (user_id,))
+        self.commit()
+
+    # ==========================================
+    # ФУНКЦИИ ДЛЯ МУЛЬТИЯЗЫЧНОСТИ
+    # ==========================================
+
+    def get_user_lang(self, user_id: int):
+        """
+        @brief Получает язык пользователя.
+        """
+        self.cursor.execute('SELECT language FROM users WHERE user_id = ?', (user_id,))
+        result = self.cursor.fetchone()
+        return result[0] if result and result[0] else 'ru'
+
+    def update_user_lang(self, user_id: int, lang: str):
+        """
+        @brief Сохраняет язык, создавая профиль, если его еще нет.
+        """
+        self.cursor.execute('''
+            INSERT INTO users (user_id, language) 
+            VALUES (?, ?) 
+            ON CONFLICT(user_id) DO UPDATE SET language=excluded.language
+        ''', (user_id, lang))
         self.commit()
 
 # Инициализируем глобальный объект для обратной совместимости с main.py

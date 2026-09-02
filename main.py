@@ -12,6 +12,7 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 import json
+from locales import TEXTS
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
@@ -105,14 +106,10 @@ class BotInterfaceManager(BaseMarkupManager):
         markup.row(btn_help, btn_start)
         return markup
 
-    def get_gender_keyboard(self) -> types.InlineKeyboardMarkup:
-        """
-        @brief Создает inline-клавиатуру для первичного выбора пола.
-        @return Объект InlineKeyboardMarkup.
-        """
+    def get_gender_keyboard(self, user_id: int) -> types.InlineKeyboardMarkup:
         markup = types.InlineKeyboardMarkup()
-        btn_m = types.InlineKeyboardButton("Я котик 🐈‍⬛", callback_data="gender_m")
-        btn_f = types.InlineKeyboardButton("Я кошечка 🐈", callback_data="gender_f")
+        btn_m = types.InlineKeyboardButton(get_text(user_id, 'btn_boy'), callback_data="gender_m")
+        btn_f = types.InlineKeyboardButton(get_text(user_id, 'btn_girl'), callback_data="gender_f")
         markup.add(btn_m, btn_f)
         return markup
 
@@ -123,6 +120,16 @@ ui_manager = BotInterfaceManager()
 # ==========================================
 # ФУНКЦИИ-ПОМОЩНИКИ (ИНТЕРФЕЙС И ТЕКСТЫ)
 # ==========================================
+
+def get_text(user_id: int, key: str) -> str:
+    """
+    @brief Умная функция для получения текста на языке пользователя.
+    """
+    user_lang = db.bot_db.get_user_lang(user_id)
+    # Если языка почему-то нет в словаре (защита от ошибок), берем русский
+    if user_lang not in TEXTS:
+        user_lang = 'ru'
+    return TEXTS[user_lang].get(key, f"[{key}]")
 
 def get_target_partner_text(user_id: int) -> str:
     """
@@ -174,6 +181,30 @@ def get_user_display_name(user_id: int) -> str:
 # ОСНОВНЫЕ КОМАНДЫ НАВИГАЦИИ
 # ==========================================
 
+@bot.message_handler(commands=['language'])
+def change_language_command(message):
+    user_id = message.chat.id
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("🇷🇺 Русский", callback_data="setlang_ru"),
+        types.InlineKeyboardButton("🇬🇧 English", callback_data="setlang_en")
+    )
+    bot.send_message(user_id, get_text(user_id, 'choose_lang'), reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("setlang_"))
+def process_language_selection(call):
+    user_id = call.message.chat.id
+    new_lang = call.data.split('_')[1] # Получаем 'ru' или 'en'
+    
+    # Сохраняем в базу
+    db.bot_db.update_user_lang(user_id, new_lang)
+    
+    # Отвечаем уже на новом языке
+    bot.edit_message_text(get_text(user_id, 'lang_changed'), user_id, call.message.message_id)
+    
+    # Обновляем клавиатуру под новый язык (пока она на русском, но суть понятна)
+    send_menu(user_id, get_text(user_id, 'menu_active'))
+
 @bot.message_handler(commands=['help'])
 def help_command(message):
     """
@@ -185,6 +216,7 @@ def help_command(message):
         "Доступные команды:\n\n"
         "/start — Перезапустить бота\n"
         "/help — Показать это меню\n"
+        "/language - Изменить язык\n"
         "/gender — Изменить свой пол\n"
         "/id — Узнать свой числовой ID\n"
         "/connect — Подключиться к котейке\n"
@@ -262,11 +294,36 @@ def start(message):
             )
         return
 
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("🇷🇺 Русский", callback_data="startlang_ru"),
+        types.InlineKeyboardButton("🇬🇧 English", callback_data="startlang_en")
+    )
+    
+    # Двуязычное стартовое приветствие
     bot.send_message(
         message.chat.id, 
         f"Привет, {message.from_user.first_name}! Я бот для парочек 💕\n"
-        "Для начала, скажи кто ты:",
-        reply_markup=ui_manager.get_gender_keyboard()
+        f"Hello, {message.from_user.first_name}! I am a bot for couples 💕\n\n"
+        "Выбери язык / Choose your language:",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("startlang_"))
+def process_initial_language(call):
+    user_id = call.message.chat.id
+    new_lang = call.data.split('_')[1] 
+    
+    db.bot_db.update_user_lang(user_id, new_lang)
+    
+    # Запрашиваем текст на нужном языке и передаем user_id в клавиатуру
+    text = get_text(user_id, 'choose_gender') 
+    
+    bot.edit_message_text(
+        text, 
+        user_id, 
+        call.message.message_id, 
+        reply_markup=ui_manager.get_gender_keyboard(user_id)
     )
 
 @bot.message_handler(func=lambda message: message.text == "🔄 Перезапуск")
@@ -278,18 +335,18 @@ def start_button_handler(message):
 
 @bot.message_handler(commands=['gender'])
 def change_gender(message):
-    """
-    @brief Обработчик команды /gender.
-    """
+    user_id = message.chat.id
+    
     bot.send_message(
-        message.chat.id, 
+        user_id, 
         "⚙️ Открываю настройки...", 
         reply_markup=types.ReplyKeyboardRemove()
     )
+    
     bot.send_message(
-        message.chat.id, 
+        user_id, 
         "Выбери, кем ты хочешь быть в системе:",
-        reply_markup=ui_manager.get_gender_keyboard() 
+        reply_markup=ui_manager.get_gender_keyboard(user_id) # <--- ОБНОВЛЕННЫЙ ВЫЗОВ
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("gender_"))
