@@ -152,6 +152,10 @@ class BotDatabase(BaseDatabase):
         if 'timeout_until' not in existing_columns:
             self.cursor.execute('ALTER TABLE users ADD COLUMN timeout_until TEXT')
             print("🔧 База данных обновлена: добавлена колонка 'timeout_until'")
+
+        if 'gcal_calendar_id' not in existing_columns:
+            self.cursor.execute("ALTER TABLE users ADD COLUMN gcal_calendar_id TEXT DEFAULT 'primary'")
+            print("🔧 База данных обновлена: добавлена колонка 'gcal_calendar_id'")
             
         self.commit()
 
@@ -616,6 +620,22 @@ class BotDatabase(BaseDatabase):
         """
         self.cursor.execute('UPDATE users SET google_creds = ? WHERE user_id = ?', (creds_json, user_id))
         self.commit()
+
+    def save_gcal_calendar_id(self, user_id: int, calendar_id: str):
+        """
+        @brief Сохраняет ID выбранного календаря.
+        """
+        self.cursor.execute('UPDATE users SET gcal_calendar_id = ? WHERE user_id = ?', (calendar_id, user_id))
+        self.commit()
+
+    def get_gcal_calendar_id(self, user_id: int):
+        """
+        @brief Получает ID выбранного календаря.
+        """
+        self.cursor.execute('SELECT gcal_calendar_id FROM users WHERE user_id = ?', (user_id,))
+        result = self.cursor.fetchone()
+        # Если ничего не выбрано, возвращаем 'primary' (основной календарь по умолчанию)
+        return result[0] if result and result[0] else 'primary'
 
     def get_google_creds(self, user_id: int):
         """

@@ -57,6 +57,8 @@ class BotStateManager:
         self.pending_partner_sync = {}
         self.waiting_for_calsync_id = {}
         self.waiting_for_calunsync_id = {}
+        self.waiting_for_calendar_selection = {}
+        self.waiting_for_new_calendar_name = {}
 
 # Инициализируем менеджер состояний
 state = BotStateManager()
@@ -210,6 +212,7 @@ def help_command(message):
         "/deldate — Удалить важную дату\n"
         "/sync\\_calendar — Привязать Google Календарь \n"
         "/unsync\\_calendar — Отвязать Google Календарь \n"
+        "/changecal — Выбрать другой календарь ⚙️\n"
         "/calsync — Добавить существующую дату в календарь \n"
         "/calunsync — Удалить дату из календаря \n\n"
         "💕 *Вишлист пары:*\n"
@@ -420,48 +423,50 @@ def set_partner(message):
     raw_input = message.text.strip()
     partner_id = None
 
+    # === ЛОКАЛЬНЫЙ ПОМОЩНИК: ВЫВОД ОШИБКИ С КНОПКОЙ ОТМЕНЫ ===
+    def send_retry(text):
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_connect"))
+        bot.send_message(message.chat.id, text, reply_markup=markup)
+
+    # 1. Проверяем юзернейм
     if raw_input.startswith('@'):
         partner_id = db.bot_db.get_id_by_username(raw_input)
         if not partner_id:
-            bot.send_message(message.chat.id, "⚠️ Котейка с таким ником не найден(а). Скажи сначала зайти в бота!")
+            send_retry("⚠️ Котейка с таким ником не найден(а). Скажи сначала зайти в бота!")
             return
+    # 2. Проверяем числовой ID
     else:
         try:
             partner_id = int(raw_input)
         except ValueError:
-            bot.send_message(
-                message.chat.id, 
-                "❌ Формат не распознан.\n"
-                "Введи либо числовой ID (только цифры), либо никнейм (обязательно с @ в начале):"
-            )
+            send_retry("❌ Формат не распознан.\nВведи либо числовой ID (только цифры), либо никнейм (обязательно с @ в начале):")
             return
 
+    # 3. Проверки на логические ошибки
     if partner_id == message.chat.id:
         self_word = get_text_by_gender(message.chat.id, male_text="самому себе", female_text="самой себе")
-        bot.send_message(message.chat.id, f"Нельзя подключиться к {self_word}! Введи ID или ник котейки:")
+        send_retry(f"Нельзя подключиться к {self_word}! Введи ID или ник котейки:")
         return
 
     if db.bot_db.get_gender(partner_id) is None:
-        bot.send_message(
-            message.chat.id, 
-            "⚠️ Ошибка! Котейка еще не запустил(а) бота или не выбрал(а) пол.\n"
-            "Попроси зайти в бота, нажать /start, выбрать пол и прислать тебе свой ID или ник!"
-        )
+        send_retry("⚠️ Ошибка! Котейка еще не запустил(а) бота или не выбрал(а) пол.\nПопроси зайти в бота, нажать /start, выбрать пол и прислать тебе свой ID или ник!")
         return 
         
     if db.bot_db.get_partner(partner_id):
-        bot.send_message(message.chat.id, "⚠️ У котейки уже есть пара! Подключение невозможно.")
+        send_retry("⚠️ У котейки уже есть пара! Подключение невозможно.")
         return
         
     if db.bot_db.is_blocked(partner_id, message.chat.id):
-        bot.send_message(message.chat.id, "⚠️ Котейка не найден(а) или ограничил(а) к себе доступ.")
+        send_retry("⚠️ Котейка не найден(а) или ограничил(а) к себе доступ.")
         return
 
     if db.bot_db.is_blocked(message.chat.id, partner_id):
         action_word = get_text_by_gender(message.chat.id, "заблокировал", "заблокировала")
-        bot.send_message(message.chat.id, f"⚠️ Ты {action_word} котейку! Сначала разблокируй через /unblock.")
+        send_retry(f"⚠️ Ты {action_word} котейку! Сначала разблокируй через /unblock.")
         return
             
+    # === ЕСЛИ ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ ===
     state.waiting_for_partner.pop(message.chat.id, None)
     state.pending_requests_sender[message.chat.id] = partner_id
 
@@ -472,7 +477,6 @@ def set_partner(message):
 
     found_text = get_text_by_gender(partner_id, "Котик найден! 🐈‍⬛", "Кошечка найдена! 🐈")
     bot.reply_to(message, f"{found_text} Отправить запрос на подключение?", reply_markup=markup)
-
 
 @bot.callback_query_handler(func=lambda call: call.data in ["req_send", "req_cancel"])
 def process_request_step1(call):
@@ -1280,15 +1284,37 @@ def process_block_unblock(message):
 # ИНТЕГРАЦИЯ С GOOGLE КАЛЕНДАРЕМ
 # ==========================================
 
-SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 @bot.message_handler(commands=['sync_calendar'])
 def sync_calendar_start(message):
     user_id = message.chat.id
-    if db.bot_db.get_google_creds(user_id):
-        bot.send_message(user_id, "✅ Твой календарь уже подключен!")
-        return
+    creds_json = db.bot_db.get_google_creds(user_id)
 
+    # Если пользователь уже привязан, пробуем дать ему меню выбора
+    if creds_json:
+        try:
+            creds = Credentials.from_authorized_user_info(json.loads(creds_json), SCOPES)
+            service = build('calendar', 'v3', credentials=creds)
+            calendar_list = service.calendarList().list().execute()
+            
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            state.waiting_for_calendar_selection[user_id] = []
+            
+            for i, cal in enumerate(calendar_list.get('items', [])):
+                state.waiting_for_calendar_selection[user_id].append(cal['id'])
+                cal_name = cal.get('summary', 'Календарь')
+                markup.add(types.InlineKeyboardButton(f"📅 {cal_name}", callback_data=f"setcal_{i}"))
+                
+            bot.send_message(user_id, "Твой аккаунт уже подключен! ⚙️\nМожешь выбрать другой календарь по умолчанию:", reply_markup=markup)
+            return
+        except Exception:
+            # Старые токены без прав на чтение списка вызовут ошибку. 
+            # Тихо удаляем их и пускаем пользователя по новой авторизации.
+            db.bot_db.delete_google_creds(user_id)
+            bot.send_message(user_id, "⚠️ Бот обновился! Для выбора календарей нужно обновить права доступа.")
+
+    # Стандартный процесс авторизации для новых (или сброшенных) пользователей
     try:
         flow = Flow.from_client_secrets_file(
             'credentials.json',
@@ -1299,6 +1325,10 @@ def sync_calendar_start(message):
         
         state.waiting_for_calendar_auth[user_id] = flow
 
+        # Создаем кнопку отмены
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_sync_calendar"))
+
         text = (
             "📅 *Подключение Google Календаря*\n\n"
             "1. Перейди по ссылке ниже и выбери свой Google-аккаунт.\n"
@@ -1306,14 +1336,38 @@ def sync_calendar_start(message):
             "3. Просто **скопируй всю ссылку целиком из адресной строки** и отправь её мне сюда.\n\n"
             f"[🔗 Подключить календарь]({auth_url})"
         )
-        bot.send_message(user_id, text, parse_mode="Markdown", disable_web_page_preview=True)
+        # Добавляем reply_markup=markup
+        bot.send_message(user_id, text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=markup)
     except FileNotFoundError:
         bot.send_message(user_id, "❌ Ошибка: файл credentials.json не найден в корне проекта.")
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_sync_calendar")
+def cancel_sync_calendar_callback(call):
+    """
+    @brief Отмена процесса привязки Google Календаря.
+    """
+    user_id = call.message.chat.id
+    # Очищаем ожидание ссылки
+    state.waiting_for_calendar_auth.pop(user_id, None)
+    
+    bot.edit_message_text("Привязка календаря отменена 🛑", user_id, call.message.message_id)
+    send_menu(user_id, "Главное меню 👇")
 
 @bot.message_handler(func=lambda m: m.chat.id in state.waiting_for_calendar_auth)
 def process_calendar_auth(message):
     user_id = message.chat.id
     flow = state.waiting_for_calendar_auth.pop(user_id, None)
+
+    # 1. Защита от потери данных (если flow пуст)
+    if flow is None:
+        bot.send_message(user_id, "⚠️ Сессия устарела или потеряна. Пожалуйста, вызови /sync_calendar заново.")
+        return
+
+    # 2. Защита от случайных фото/стикеров
+    if not message.text:
+        state.waiting_for_calendar_auth[user_id] = flow
+        bot.send_message(user_id, "❌ Пожалуйста, отправь ссылку обычным текстом.")
+        return
 
     if message.text.startswith('/'):
         bot.send_message(user_id, "Ввод отменен. Навигация активна 👇", reply_markup=ui_manager.get_main_keyboard(user_id))
@@ -1321,10 +1375,19 @@ def process_calendar_auth(message):
 
     raw_text = message.text.strip()
 
-    # 1. Проверяем наличие главного элемента — кода авторизации
-    if 'code=' not in raw_text:
-        bot.send_message(user_id, "❌ Это не похоже на ссылку (нет секретного кода). Скопируй её из адресной строки браузера целиком или нажми /sync_calendar для отмены.")
-        state.waiting_for_calendar_auth[user_id] = flow
+    def send_error_and_retry(error_text):
+        state.waiting_for_calendar_auth[user_id] = flow  # Возвращаем состояние ожидания
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_sync_calendar"))
+        bot.send_message(
+            user_id, 
+            f"{error_text}\n\nСкопируй ссылку из адресной строки браузера целиком и отправь еще раз, либо отмени действие:", 
+            reply_markup=markup
+        )
+
+    # Ищем слово code (без знака =, на случай если браузер его зашифровал)
+    if 'code' not in raw_text:
+        send_error_and_retry("❌ В тексте нет секретного кода. Убедись, что копируешь ссылку из адресной строки целиком.")
         return
 
     try:
@@ -1338,33 +1401,26 @@ def process_calendar_auth(message):
         creds = flow.credentials
         
         db.bot_db.save_google_creds(user_id, creds.to_json())
-        bot.send_message(user_id, "✅ Календарь успешно подключен!", reply_markup=ui_manager.get_main_keyboard(user_id))
         
-        # ПРОВЕРЯЕМ, ЕСТЬ ЛИ ОТЛОЖЕННАЯ ДАТА У ИНИЦИАТОРА ИЛИ ПАРТНЕРА
-        pending_date_init = state.pending_google_sync.get(user_id)
-        pending_date_partner = state.pending_partner_sync.get(user_id)
+        # Получаем список доступных календарей пользователя
+        service = build('calendar', 'v3', credentials=creds)
+        calendar_list = service.calendarList().list().execute()
         
-        if pending_date_init:
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                types.InlineKeyboardButton("🗓 Да, закинуть в Google Календарь", callback_data="post_sync_yes"),
-                types.InlineKeyboardButton("Нет, оставить только в боте", callback_data="post_sync_no")
-            )
-            bot.send_message(user_id, f"Добавить дату «{pending_date_init['title']}», которую мы только что создали?", reply_markup=markup)
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        state.waiting_for_calendar_selection[user_id] = []
+        
+        for i, cal in enumerate(calendar_list.get('items', [])):
+            state.waiting_for_calendar_selection[user_id].append(cal['id'])
+            cal_name = cal.get('summary', 'Календарь')
+            markup.add(types.InlineKeyboardButton(f"📅 {cal_name}", callback_data=f"setcal_{i}"))
+
+        markup.add(types.InlineKeyboardButton("➕ Создать новый календарь", callback_data="create_new_calendar"))
             
-        elif pending_date_partner:
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(
-                types.InlineKeyboardButton("🗓 Добавить в мой Google Календарь", callback_data="partner_sync_yes"),
-                types.InlineKeyboardButton("Нет, оставить только в боте", callback_data="partner_sync_no")
-            )
-            bot.send_message(user_id, f"Добавить дату «{pending_date_partner['title']}», которую тебе предложили?", reply_markup=markup)
-            
-        else:
-            bot.send_message(user_id, "Теперь совместные важные даты будут автоматически появляться в твоем расписании.")
-            
+        bot.send_message(user_id, "✅ Аккаунт подключен!\nВ какой календарь сохранять важные даты?", reply_markup=markup)
+        
     except Exception as e:
-        bot.send_message(user_id, f"❌ Ошибка авторизации: проверь правильность ссылки или начни заново через /sync\\_calendar.\nДетали: {e}")
+        # Теперь бот будет прямо писать, что пошло не так (полезно для отладки)
+        send_error_and_retry(f"❌ Ошибка авторизации.\nДетали: `{e}`")
 
 def add_event_to_google_calendar(user_id: int, title: str, event_date: str, is_annual: int) -> str:
     creds_json = db.bot_db.get_google_creds(user_id)
@@ -1391,6 +1447,156 @@ def delete_event_from_google_calendar(user_id: int, event_id: str) -> bool:
         return True
     except:
         return False
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("setcal_"))
+def process_calendar_selection(call):
+    # Отключаем анимацию загрузки на кнопке
+    bot.answer_callback_query(call.id)
+    
+    user_id = call.message.chat.id
+    idx = int(call.data.split('_')[1])
+    
+    # Достаем список сохраненных ID календарей из ОЗУ
+    cals = state.waiting_for_calendar_selection.pop(user_id, None)
+    
+    if not cals or idx >= len(cals):
+        bot.edit_message_text("❌ Сессия устарела. Начни привязку заново через /sync_calendar.", user_id, call.message.message_id)
+        return
+        
+    db.bot_db.save_gcal_calendar_id(user_id, cals[idx])
+    bot.edit_message_text("✅ Календарь по умолчанию успешно выбран!", user_id, call.message.message_id)
+    
+    # Проверяем, есть ли отложенные даты для добавления
+    pending_date_init = state.pending_google_sync.get(user_id)
+    pending_date_partner = state.pending_partner_sync.get(user_id)
+    
+    if pending_date_init:
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("🗓 Да, закинуть в Календарь", callback_data="post_sync_yes"),
+            types.InlineKeyboardButton("Нет, оставить в боте", callback_data="post_sync_no")
+        )
+        bot.send_message(user_id, f"Добавить дату «{pending_date_init['title']}»?", reply_markup=markup)
+    elif pending_date_partner:
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("🗓 Добавить в Календарь", callback_data="partner_sync_yes"),
+            types.InlineKeyboardButton("Нет, оставить в боте", callback_data="partner_sync_no")
+        )
+        bot.send_message(user_id, f"Добавить дату «{pending_date_partner['title']}»?", reply_markup=markup)
+    else:
+        bot.send_message(user_id, "Теперь совместные важные даты будут автоматически появляться в твоем расписании.")
+
+@bot.message_handler(commands=['changecal'])
+def change_calendar_command(message):
+    """
+    @brief Отдельная команда для смены календаря по умолчанию.
+    """
+    user_id = message.chat.id
+    creds_json = db.bot_db.get_google_creds(user_id)
+
+    if not creds_json:
+        bot.send_message(user_id, "💡 Твой Google Календарь еще не привязан! Сначала используй /sync_calendar.")
+        return
+
+    try:
+        creds = Credentials.from_authorized_user_info(json.loads(creds_json), SCOPES)
+        service = build('calendar', 'v3', credentials=creds)
+        calendar_list = service.calendarList().list().execute()
+        
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        state.waiting_for_calendar_selection[user_id] = []
+        
+        for i, cal in enumerate(calendar_list.get('items', [])):
+            state.waiting_for_calendar_selection[user_id].append(cal['id'])
+            cal_name = cal.get('summary', 'Календарь')
+            markup.add(types.InlineKeyboardButton(f"📅 {cal_name}", callback_data=f"setcal_{i}"))
+
+        markup.add(types.InlineKeyboardButton("➕ Создать новый календарь", callback_data="create_new_calendar"))
+            
+        bot.send_message(user_id, "⚙️ Выбери новый календарь по умолчанию:", reply_markup=markup)
+        
+    except Exception:
+        # Если права устарели или токен больше не работает
+        db.bot_db.delete_google_creds(user_id)
+        bot.send_message(user_id, "⚠️ Твоя сессия Google устарела или не хватает прав. Пожалуйста, привяжи календарь заново через /sync\\_calendar.")
+
+@bot.callback_query_handler(func=lambda call: call.data == "create_new_calendar")
+def create_new_calendar_callback(call):
+    bot.answer_callback_query(call.id)
+    user_id = call.message.chat.id
+    state.waiting_for_new_calendar_name[user_id] = True
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("Отменить ❌", callback_data="cancel_create_calendar"))
+    
+    bot.edit_message_text(
+        "✍️ Введи название для нового календаря (например, «Наши даты 💕»):", 
+        user_id, 
+        call.message.message_id, 
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "cancel_create_calendar")
+def cancel_create_calendar_callback(call):
+    user_id = call.message.chat.id
+    state.waiting_for_new_calendar_name.pop(user_id, None)
+    bot.edit_message_text("Создание календаря отменено 🛑", user_id, call.message.message_id)
+    send_menu(user_id)
+
+@bot.message_handler(func=lambda m: m.chat.id in state.waiting_for_new_calendar_name)
+def process_new_calendar_name(message):
+    user_id = message.chat.id
+    
+    if message.text.startswith('/') or message.text in ["💌 Послание", "❓ Помощь", "🔄 Перезапуск"]:
+        state.waiting_for_new_calendar_name.pop(user_id, None)
+        bot.send_message(user_id, "Ввод отменен. Навигация активна 👇", reply_markup=ui_manager.get_main_keyboard(user_id))
+        return
+        
+    state.waiting_for_new_calendar_name.pop(user_id, None)
+    calendar_name = message.text.strip()
+    creds_json = db.bot_db.get_google_creds(user_id)
+    
+    if not creds_json:
+        bot.send_message(user_id, "❌ Ошибка: нет привязанного аккаунта Google.")
+        return
+        
+    bot.send_message(user_id, "⏳ Создаю календарь в Google...")
+    
+    try:
+        creds = Credentials.from_authorized_user_info(json.loads(creds_json), SCOPES)
+        service = build('calendar', 'v3', credentials=creds)
+        
+        # Создаем календарь
+        new_calendar = {'summary': calendar_name}
+        created_calendar = service.calendars().insert(body=new_calendar).execute()
+        
+        # Сохраняем его ID в базу данных
+        db.bot_db.save_gcal_calendar_id(user_id, created_calendar['id'])
+        
+        bot.send_message(user_id, f"✅ Календарь «{calendar_name}» успешно создан и выбран по умолчанию!")
+        
+        # Проверяем, есть ли отложенные даты для добавления
+        pending_date_init = state.pending_google_sync.get(user_id)
+        pending_date_partner = state.pending_partner_sync.get(user_id)
+        
+        if pending_date_init:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                types.InlineKeyboardButton("🗓 Да, закинуть в Календарь", callback_data="post_sync_yes"),
+                types.InlineKeyboardButton("Нет, оставить в боте", callback_data="post_sync_no")
+            )
+            bot.send_message(user_id, f"Добавить дату «{pending_date_init['title']}»?", reply_markup=markup)
+        elif pending_date_partner:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(
+                types.InlineKeyboardButton("🗓 Добавить в Календарь", callback_data="partner_sync_yes"),
+                types.InlineKeyboardButton("Нет, оставить в боте", callback_data="partner_sync_no")
+            )
+            bot.send_message(user_id, f"Добавить дату «{pending_date_partner['title']}»?", reply_markup=markup)
+            
+    except Exception as e:
+        bot.send_message(user_id, f"❌ Ошибка при создании календаря.\nДетали: `{e}`")
 
 @bot.message_handler(commands=['unsync_calendar'])
 def unsync_calendar_command(message):
@@ -1512,8 +1718,10 @@ def add_date_start(message):
         bot.send_message(user_id, "❌ У тебя нет пары! Сначала подключись через /connect")
         return
 
-    # Проверка перед началом: есть ли календарь?
-    if not db.bot_db.get_google_creds(user_id):
+    creds_json = db.bot_db.get_google_creds(user_id)
+
+    # 1. Если календаря вообще нет — предлагаем привязать
+    if not creds_json:
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("🔗 Привязать календарь", callback_data="pre_add_sync"),
@@ -1526,7 +1734,21 @@ def add_date_start(message):
             parse_mode="Markdown", reply_markup=markup
         )
     else:
-        start_date_creation(user_id, partner_id)
+        # 2. Невидимая проверка актуальности прав доступа перед созданием даты
+        try:
+            creds = Credentials.from_authorized_user_info(json.loads(creds_json), SCOPES)
+            service = build('calendar', 'v3', credentials=creds)
+            # Пробуем получить список календарей. Если права старые — будет ошибка
+            service.calendarList().list().execute() 
+            
+            # Если ошибки нет, всё отлично — запускаем создание даты
+            start_date_creation(user_id, partner_id)
+            
+        except Exception:
+            # Если Google выдал ошибку, сбрасываем старый токен и запускаем обновление
+            db.bot_db.delete_google_creds(user_id)
+            bot.send_message(user_id, "⚠️ Бот обновился! Чтобы даты продолжили сохраняться в твой Google Календарь, нужно один раз обновить права доступа 👇")
+            sync_calendar_start(message)
 
 @bot.callback_query_handler(func=lambda call: call.data in ["pre_add_sync", "pre_add_skip"])
 def handle_pre_add_choices(call):
