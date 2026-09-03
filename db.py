@@ -302,6 +302,20 @@ class BotDatabase(BaseDatabase):
         result = self.cursor.fetchone()
         return result[0] if result and result[0] else None
 
+    def sync_username(self, user_id: int, username: str):
+        """
+        @brief Фоновое обновление юзернейма (добавление, изменение или удаление).
+        """
+        clean_username = username.replace('@', '') if username else None
+        
+        self.cursor.execute('SELECT username FROM users WHERE user_id = ?', (user_id,))
+        result = self.cursor.fetchone()
+        
+        # Если юзернейм в базе отличается от актуального — перезаписываем
+        if result and result[0] != clean_username:
+            self.cursor.execute('UPDATE users SET username = ? WHERE user_id = ?', (clean_username, user_id))
+            self.commit()
+
     # ==========================================
     # ФУНКЦИИ ДЛЯ ВАЖНЫХ ДАТ
     # ==========================================

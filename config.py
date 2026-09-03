@@ -12,6 +12,8 @@ PROXY = os.getenv("PROXY_URL")
 #if PROXY:
    #apihelper.proxy = {'https': PROXY}
 
+apihelper.ENABLE_MIDDLEWARE = True
+
 bot = telebot.TeleBot(TOKEN)
 
 # Достаем строчку с ID из .env (если её нет, берем пустую строку)

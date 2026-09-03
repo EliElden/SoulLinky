@@ -61,6 +61,18 @@ class BotStateManager:
 # Инициализируем менеджер состояний
 state = BotStateManager()
 
+# ==========================================
+# ФОНОВАЯ СИНХРОНИЗАЦИЯ БАЗЫ ДАННЫХ
+# ==========================================
+
+@bot.middleware_handler(update_types=['message', 'callback_query'])
+def background_username_sync(bot_instance, update):
+    """
+    @brief Невидимый перехватчик. Обновляет юзернейм в БД при любом действии пользователя.
+    """
+    user = update.from_user
+    if user:
+        db.bot_db.sync_username(user.id, user.username)
 
 # ==========================================
 # ОБЪЕКТНО-ОРИЕНТИРОВАННАЯ АРХИТЕКТУРА ИНТЕРФЕЙСА
