@@ -1822,7 +1822,7 @@ def process_partner_sync(call):
 @bot.message_handler(commands=['mydates'])
 def list_dates(message):
     """
-    @brief Выводит список всех важных дат пользователя с привычным форматом ДД.ММ.ГГГГ.
+    @brief Выводит список всех важных дат пользователя с подсчетом прошедших дней.
     """
     dates = db.bot_db.get_dates_for_user(message.chat.id)
     if not dates:
@@ -1832,28 +1832,42 @@ def list_dates(message):
     today = datetime.now().date()
     text = "📅 *Ваши общие важные даты:*\n\n"
     
-    for date_id, title, event_date, is_annual, remind_days, creator_id, username in dates:
+    # Символ `_` используется как заглушка для старого username из БД
+    for date_id, title, event_date, is_annual, remind_days, creator_id, _ in dates:
         date_obj = datetime.strptime(event_date, "%Y-%m-%d").date()
-
-        # Красиво форматируем дату в ДД.ММ.ГГГГ для отображения
         formatted_date_str = date_obj.strftime("%d.%m.%Y")
+        
+        # Считаем, сколько всего дней прошло с оригинальной даты
+        total_days_passed = (today - date_obj).days
 
         if is_annual:
             next_date = date_obj.replace(year=today.year)
             if next_date < today:
                 next_date = next_date.replace(year=today.year + 1)
             days_left = (next_date - today).days
-            date_str = f"каждый год {formatted_date_str[:5]}" # ДД.ММ
+            
+            date_str = f"каждый год {formatted_date_str[:5]}" # Показываем только ДД.ММ
+            
+            if total_days_passed > 0:
+                # Считаем полные прошедшие годы для красивого вывода
+                years_passed = today.year - date_obj.year - ((today.month, today.day) < (date_obj.month, date_obj.day))
+                status = f" (через {days_left} дн.)\n  ⏳ С {date_obj.year} года прошло: {total_days_passed} дн. ({years_passed} лет/года)"
+            elif total_days_passed == 0:
+                status = " (сегодня! 🎉)"
+            else:
+                status = f" (через {abs(total_days_passed)} дн.)"
         else:
-            days_left = (date_obj - today).days
             date_str = formatted_date_str
+            
+            if total_days_passed > 0:
+                status = f" (прошло {total_days_passed} дн.)"
+            elif total_days_passed == 0:
+                status = " (сегодня! 🎉)"
+            else:
+                status = f" (через {abs(total_days_passed)} дн.)"
 
-        if days_left >= 0:
-            status = f" (через {days_left} дн.)"
-        else:
-            status = " (прошла)"
-
-        creator = f"@{username}" if username else creator_id
+        # Получаем актуальное имя через обновленную функцию
+        creator = get_user_display_name(creator_id)
 
         text += f"• *{title}* — {date_str}{status}\n"
         text += f"  `id:{date_id}` | напом. за {remind_days} дн.\n"
