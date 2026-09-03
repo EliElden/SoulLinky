@@ -223,7 +223,9 @@ def help_command(message):
         "🛡 *Безопасность:*\n"
         "/block — Заблокировать котейку\n"
         "/unblock — Разблокировать котейку\n"
-        "/blacklist — Мой черный список"
+        "/blacklist — Мой черный список\n\n"
+        "🛠 *Прочее:*\n"
+        "/feedback — Оставить отзыв или сообщить об ошибке 💬\n"
     )
     
     if message.chat.id in ADMIN_IDS:
@@ -234,6 +236,24 @@ def help_command(message):
         )
 
     bot.send_message(message.chat.id, help_text, parse_mode="Markdown", reply_markup=markup)
+
+@bot.message_handler(commands=['feedback'])
+def feedback_command(message):
+    """
+    @brief Отправляет ссылку на форму обратной связи.
+    """
+    user_id = message.chat.id
+    feedback_url = "https://forms.yandex.ru/u/69eaf4d41f1eb5dd4d1ea454/" 
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("📝 Заполнить форму", url=feedback_url))
+    
+    text = (
+        "💬 *Обратная связь*\n\n"
+        "Нашел ошибку, хочешь предложить крутую идею или просто поделиться впечатлениями о боте? "
+        "Нажми на кнопку ниже, чтобы открыть форму обратной связи. Буду очень рад твоему отзыву! 💕"
+    )
+    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=markup)
 
 @bot.message_handler(func=lambda message: message.text == "❓ Помощь")
 def help_button_handler(message):
